@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzz
+*.pywzz
+*.pyzzz
+*.pywzzz
+
+# Virtual environment
+venv/
+
+# Data
+data/
+
+# Checkpoints
+checkpoints/
+
+# Logs
+logs/
+
+
+#Original Code
+Mario-Fun-Study-original-code
