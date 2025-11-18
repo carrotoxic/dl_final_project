@@ -13,15 +13,16 @@ class DataConfig:
 @dataclass
 class ModelConfig:
     input_dim: int = 2
+    frame_hidden_dim: int = 32
     hidden_dim: int =  64
-    latent_dim: int = 16
+    latent_dim: int = 32
     num_layers: int = 1
     use_batch_norm: bool = False
 
 
 @dataclass
 class TrainConfig:
-    batch_size: int = 256
+    batch_size: int = 128
     num_epochs: int = 1000
     lr: float = 1e-2
     weight_decay: float = 0

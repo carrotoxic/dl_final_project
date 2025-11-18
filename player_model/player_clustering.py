@@ -68,6 +68,104 @@ def extract_latent(device: torch.device):
     return latents, meta
 
 
+def extract_all_features(device: torch.device):
+    """
+    Extract all features: latent vectors + game statistics.
+    Returns:
+        features: np.ndarray [N, feature_dim] - combined feature vector
+        latents: np.ndarray [N, latent_dim] - latent vectors only (for visualization)
+        meta: list[dict] - metadata for each sample
+    """
+    from sklearn.preprocessing import StandardScaler
+    
+    # First extract latent vectors
+    latents, meta = extract_latent(device)
+    
+    # Load additional features from JSON files
+    print("[INFO] Loading additional features from JSON files...")
+    status_list = []
+    numeric_features = []
+    valid_indices = []
+    
+    for i, m in enumerate(meta):
+        path = Path(m["path"])
+        try:
+            with path.open("r") as f:
+                data = json.load(f)
+            
+            # Extract features
+            status = data.get("status", "UNKNOWN")
+            completing_ratio = data.get("completing-ratio", 0.0)
+            kills = data.get("#kills", 0)
+            kills_by_fire = data.get("#kills-by-fire", 0)
+            kills_by_stomp = data.get("#kills-by-stomp", 0)
+            kills_by_shell = data.get("#kills-by-shell", 0)
+            lives = data.get("lives", 0)
+            
+            status_list.append(status)
+            numeric_features.append([
+                completing_ratio,
+                float(kills),
+                float(kills_by_fire),
+                float(kills_by_stomp),
+                float(kills_by_shell),
+                float(lives),
+            ])
+            valid_indices.append(i)
+            
+            # Update meta with additional info
+            m.update({
+                "status": status,
+                "completing_ratio": completing_ratio,
+                "kills": kills,
+                "kills_by_fire": kills_by_fire,
+                "kills_by_stomp": kills_by_stomp,
+                "kills_by_shell": kills_by_shell,
+                "lives": lives,
+            })
+        except Exception as e:
+            print(f"[WARN] Failed to load features from {path}: {e}")
+            continue
+    
+    if len(numeric_features) != len(latents):
+        print(f"[WARN] Mismatch: {len(numeric_features)} feature vectors vs {len(latents)} latent vectors")
+        # Filter to only valid indices
+        latents = latents[valid_indices]
+        meta = [meta[i] for i in valid_indices]
+    
+    # One-hot encode status
+    status_onehot = []
+    for status in status_list:
+        if status == "WIN":
+            status_onehot.append([1.0, 0.0, 0.0])
+        elif status == "LOSE":
+            status_onehot.append([0.0, 1.0, 0.0])
+        elif status == "timeout":
+            status_onehot.append([0.0, 0.0, 1.0])
+        else:
+            # Unknown status - default to LOSE
+            status_onehot.append([0.0, 1.0, 0.0])
+    
+    status_onehot = np.array(status_onehot, dtype=np.float32)  # [N, 3]
+    numeric_features = np.array(numeric_features, dtype=np.float32)  # [N, 6]
+    
+    # Normalize numeric features (status one-hot doesn't need normalization)
+    scaler = StandardScaler()
+    numeric_features_scaled = scaler.fit_transform(numeric_features)
+    
+    # Combine: latent + status_onehot + numeric_features
+    additional_features = np.concatenate([status_onehot, numeric_features_scaled], axis=1)  # [N, 3 + 6 = 9]
+    
+    # Combine latent vectors with additional features
+    features = np.concatenate([latents, additional_features], axis=1)  # [N, latent_dim + 9]
+    
+    print(f"[INFO] Combined features shape: {features.shape} (latent: {latents.shape[1]}, additional: {additional_features.shape[1]})")
+    print(f"[INFO]   - Status one-hot: 3 dims (WIN, LOSE, timeout)")
+    print(f"[INFO]   - Numeric features: 6 dims (completing_ratio, kills, kills_by_fire, kills_by_stomp, kills_by_shell, lives)")
+    
+    return features, latents, meta
+
+
 def plot_latent_2d_clusters(
     latents: np.ndarray,
     labels: np.ndarray,
@@ -553,17 +651,18 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1) extract latent vectors
-    print("[INFO] extracting latent vectors...")
-    latents, meta = extract_latent(device)
+    # 1) extract all features (latent + game statistics)
+    print("[INFO] extracting all features (latent vectors + game statistics)...")
+    features, latents, meta = extract_all_features(device)
 
     # Extract the player_id list
     player_ids = [m["player_id"] for m in meta]
 
-    # k-means clustering
+    # k-means clustering on combined features
     from sklearn.cluster import KMeans
+    print(f"[INFO] Clustering with {features.shape[1]} features per sample...")
     kmeans = KMeans(n_clusters=args.n_clusters, random_state=42)
-    labels = kmeans.fit_predict(latents)
+    labels = kmeans.fit_predict(features)
 
     # Show simple statistics for each cluster (for a rough idea)
     print("\n[INFO] cluster statistics:")
@@ -587,6 +686,13 @@ def main():
                     "path": str(m["path"]),
                     "length": m["length"],
                     "cluster": int(c),
+                    "status": m.get("status", "UNKNOWN"),
+                    "completing_ratio": m.get("completing_ratio", 0.0),
+                    "kills": m.get("kills", 0),
+                    "kills_by_fire": m.get("kills_by_fire", 0),
+                    "kills_by_stomp": m.get("kills_by_stomp", 0),
+                    "kills_by_shell": m.get("kills_by_shell", 0),
+                    "lives": m.get("lives", 0),
                 }
                 for m, c in zip(meta, labels)
             ],
@@ -604,8 +710,9 @@ def main():
         json.dump(player_clusters, f, indent=2)
     print(f"[INFO] saved player-level clusters to: {player_clusters_path}")
 
-    # Save the raw latent vectors and centers
+    # Save the raw latent vectors, combined features, and centers
     np.save(output_dir / "latents.npy", latents)
+    np.save(output_dir / "combined_features.npy", features)
     np.save(output_dir / f"kmeans_centers_k{args.n_clusters}.npy", kmeans.cluster_centers_)
 
     # ==== Start plotting ====

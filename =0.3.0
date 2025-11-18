@@ -1,0 +1,14 @@
+Collecting numpy<2.0.0,>=1.24.0
+  Using cached numpy-1.26.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (61 kB)
+Requirement already satisfied: scikit-learn-extra in ./venv/lib/python3.12/site-packages (0.3.0)
+Requirement already satisfied: scipy>=0.19.1 in ./venv/lib/python3.12/site-packages (from scikit-learn-extra) (1.16.3)
+Requirement already satisfied: scikit-learn>=0.23.0 in ./venv/lib/python3.12/site-packages (from scikit-learn-extra) (1.7.2)
+Requirement already satisfied: joblib>=1.2.0 in ./venv/lib/python3.12/site-packages (from scikit-learn>=0.23.0->scikit-learn-extra) (1.5.2)
+Requirement already satisfied: threadpoolctl>=3.1.0 in ./venv/lib/python3.12/site-packages (from scikit-learn>=0.23.0->scikit-learn-extra) (3.6.0)
+Using cached numpy-1.26.4-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (18.0 MB)
+Installing collected packages: numpy
+  Attempting uninstall: numpy
+    Found existing installation: numpy 2.3.5
+    Uninstalling numpy-2.3.5:
+      Successfully uninstalled numpy-2.3.5
+Successfully installed numpy-1.26.4
