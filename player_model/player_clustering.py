@@ -1,28 +1,32 @@
 import argparse
+import csv
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-
 from .auto_encoder.config import data_config, model_config, train_config
 from .auto_encoder.datasets.trajectory_datasets import TrajectoryDataset, trajectory_collate_fn
 from .auto_encoder.models.lstm_autoencoder import LSTMAutoencoder
 
 
-def extract_latent(device: torch.device):
+def extract_latent(device: torch.device, normalize: bool = True):
     """
     Extract latent vectors from all traces using the trained LSTM Autoencoder.
+    
+    Args:
+        device: torch device
+        normalize: If True, normalize latents using StandardScaler
+        
     Returns:
-        latents: np.ndarray [N, latent_dim]
-        meta: list[dict]  metadata for each sample (player_id, path, length)
+        latents: np.ndarray [N, latent_dim] (normalized if normalize=True)
+        meta: list[dict] metadata for each sample (player_id, path, length)
     """
-    # Dataset (use all data. train/val split is not done here)
+    from sklearn.preprocessing import StandardScaler
+    
     dataset = TrajectoryDataset(data_config, normalize=True)
     dataloader = DataLoader(
         dataset,
@@ -33,10 +37,8 @@ def extract_latent(device: torch.device):
         pin_memory=True,
     )
 
-    # Load model
     model = LSTMAutoencoder(model_config).to(device)
     ckpt_path = train_config.model_save_path
-    # weights_only=False is needed for PyTorch 2.6+ when checkpoint contains custom classes
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
@@ -51,37 +53,39 @@ def extract_latent(device: torch.device):
             player_ids = batch["player_ids"]
             paths = batch["paths"]
 
-            # [B, latent_dim]
             z = model.encode(trajectories, lengths)
-
             all_latents.append(z.cpu().numpy())
+            
             for pid, pth, L in zip(player_ids, paths, lengths.cpu().tolist()):
-                meta.append(
-                    {
-                        "player_id": pid,
-                        "path": str(pth),
-                        "length": L,
-                    }
-                )
+                meta.append({
+                    "player_id": pid,
+                    "path": str(pth),
+                    "length": L,
+                })
 
-    latents = np.concatenate(all_latents, axis=0)  # [N, latent_dim]
+    latents = np.concatenate(all_latents, axis=0)
+    
+    if normalize:
+        scaler = StandardScaler()
+        latents = scaler.fit_transform(latents)
+    
     return latents, meta
 
 
 def extract_all_features(device: torch.device):
     """
     Extract all features: latent vectors + game statistics.
+    
     Returns:
         features: np.ndarray [N, feature_dim] - combined feature vector
-        latents: np.ndarray [N, latent_dim] - latent vectors only (for visualization)
+        latents: np.ndarray [N, latent_dim] - latent vectors only
         meta: list[dict] - metadata for each sample
+        non_trajectory_features: np.ndarray [N, 9] - game statistics (status one-hot + numeric features)
     """
     from sklearn.preprocessing import StandardScaler
     
-    # First extract latent vectors
-    latents, meta = extract_latent(device)
+    latents, meta = extract_latent(device, normalize=True)
     
-    # Load additional features from JSON files
     print("[INFO] Loading additional features from JSON files...")
     status_list = []
     numeric_features = []
@@ -93,7 +97,6 @@ def extract_all_features(device: torch.device):
             with path.open("r") as f:
                 data = json.load(f)
             
-            # Extract features
             status = data.get("status", "UNKNOWN")
             completing_ratio = data.get("completing-ratio", 0.0)
             kills = data.get("#kills", 0)
@@ -113,7 +116,6 @@ def extract_all_features(device: torch.device):
             ])
             valid_indices.append(i)
             
-            # Update meta with additional info
             m.update({
                 "status": status,
                 "completing_ratio": completing_ratio,
@@ -128,8 +130,6 @@ def extract_all_features(device: torch.device):
             continue
     
     if len(numeric_features) != len(latents):
-        print(f"[WARN] Mismatch: {len(numeric_features)} feature vectors vs {len(latents)} latent vectors")
-        # Filter to only valid indices
         latents = latents[valid_indices]
         meta = [meta[i] for i in valid_indices]
     
@@ -140,297 +140,33 @@ def extract_all_features(device: torch.device):
             status_onehot.append([1.0, 0.0, 0.0])
         elif status == "LOSE":
             status_onehot.append([0.0, 1.0, 0.0])
-        elif status == "timeout":
+        elif status == "TIME_OUT":
             status_onehot.append([0.0, 0.0, 1.0])
         else:
-            # Unknown status - default to LOSE
             status_onehot.append([0.0, 1.0, 0.0])
     
-    status_onehot = np.array(status_onehot, dtype=np.float32)  # [N, 3]
-    numeric_features = np.array(numeric_features, dtype=np.float32)  # [N, 6]
+    status_onehot = np.array(status_onehot, dtype=np.float32)
+    numeric_features = np.array(numeric_features, dtype=np.float32)
     
-    # Normalize numeric features (status one-hot doesn't need normalization)
+    # Normalize numeric features
     scaler = StandardScaler()
     numeric_features_scaled = scaler.fit_transform(numeric_features)
     
-    # Combine: latent + status_onehot + numeric_features
-    additional_features = np.concatenate([status_onehot, numeric_features_scaled], axis=1)  # [N, 3 + 6 = 9]
+    # Combine: status_onehot + numeric_features (non-trajectory features)
+    non_trajectory_features = np.concatenate([status_onehot, numeric_features_scaled], axis=1)
     
     # Combine latent vectors with additional features
-    features = np.concatenate([latents, additional_features], axis=1)  # [N, latent_dim + 9]
+    features = np.concatenate([latents, non_trajectory_features], axis=1)
     
-    print(f"[INFO] Combined features shape: {features.shape} (latent: {latents.shape[1]}, additional: {additional_features.shape[1]})")
-    print(f"[INFO]   - Status one-hot: 3 dims (WIN, LOSE, timeout)")
-    print(f"[INFO]   - Numeric features: 6 dims (completing_ratio, kills, kills_by_fire, kills_by_stomp, kills_by_shell, lives)")
+    print(f"[INFO] Combined features shape: {features.shape}")
+    print(f"[INFO]   - Latent: {latents.shape[1]} dims")
+    print(f"[INFO]   - Non-trajectory: {non_trajectory_features.shape[1]} dims")
     
-    return features, latents, meta
-
-
-def plot_latent_2d_clusters(
-    latents: np.ndarray,
-    labels: np.ndarray,
-    save_path: Path,
-):
-    """
-    Plot the 2D latent projection (PCA): color = cluster ID, show Ck label at the center.
-    """
-    from sklearn.decomposition import PCA
-
-    print("[INFO] plotting 2D latent projection by CLUSTER (PCA)...")
-    pca = PCA(n_components=2, random_state=42)
-    lat_2d = pca.fit_transform(latents)  # [N, 2]
-
-    plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(
-        lat_2d[:, 0],
-        lat_2d[:, 1],
-        c=labels,
-        s=10,
-        alpha=0.8,
-        cmap="tab10",
-    )
-    plt.colorbar(scatter, label="Cluster ID")
-    plt.xlabel("PC1")
-    plt.ylabel("PC2")
-    plt.title("Latent Space (PCA 2D, colored by cluster)")
-
-    # Draw the center of each cluster and the label Ck
-    unique_labels = np.unique(labels)
-    for k in unique_labels:
-        idx = labels == k
-        if not np.any(idx):
-            continue
-        cx = lat_2d[idx, 0].mean()
-        cy = lat_2d[idx, 1].mean()
-        plt.text(
-            cx,
-            cy,
-            f"C{k}",
-            fontsize=9,
-            fontweight="bold",
-            ha="center",
-            va="center",
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7),
-        )
-
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
-    print(f"[INFO] saved 2D cluster plot to: {save_path}")
-
-
-def plot_latent_2d_players(
-    latents: np.ndarray,
-    player_ids: list[str],
-    save_path: Path,
-):
-    """
-    Plot the 2D latent projection (PCA): color = player ID
-    This plot is to see which points belong to the same player.
-    Only samples 5 players for visualization.
-    """
-    from sklearn.decomposition import PCA
-
-    print("[INFO] plotting 2D latent projection by PLAYER (PCA)...")
-    
-    # Count data points per player and select top 5 by data size
-    from collections import Counter
-    player_counts = Counter(player_ids)
-    # Sort by count (descending) and take top 5
-    top_players = sorted(player_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-    sampled_players = sorted([pid for pid, _ in top_players])
-    player_sizes = {pid: count for pid, count in top_players}
-    
-    # Filter latents and player_ids to only include sampled players
-    mask = np.array([pid in sampled_players for pid in player_ids])
-    filtered_latents = latents[mask]
-    filtered_player_ids = [pid for pid, m in zip(player_ids, mask) if m]
-    
-    print(f"[INFO] sampling top {len(sampled_players)} players by data size: {[(pid, player_sizes[pid]) for pid in sampled_players]}")
-    
-    pca = PCA(n_components=2, random_state=42)
-    lat_2d = pca.fit_transform(filtered_latents)  # [N, 2]
-
-    # Map player_id -> index for sampled players
-    player_to_idx = {pid: i for i, pid in enumerate(sampled_players)}
-    player_indices = np.array([player_to_idx[pid] for pid in filtered_player_ids])
-
-    # Color map: loop through the number of players using tab20
-    cmap = plt.get_cmap("tab20")
-    colors = [cmap(i % cmap.N) for i in player_indices]
-
-    plt.figure(figsize=(8, 6))
-    plt.scatter(
-        lat_2d[:, 0],
-        lat_2d[:, 1],
-        c=colors,
-        s=10,
-        alpha=0.8,
-    )
-    plt.xlabel("PC1")
-    plt.ylabel("PC2")
-    plt.title(f"Latent Space (PCA 2D, colored by player - top {len(sampled_players)} players by data size)")
-
-    # Show legend for all sampled players
-    handles = []
-    labels = []
-    for pid in sampled_players:
-        idx = [j for j, p in enumerate(filtered_player_ids) if p == pid]
-        if not idx:
-            continue
-        color = colors[idx[0]]
-        h = plt.Line2D(
-            [], [], marker="o", linestyle="", markersize=5, color=color
-        )
-        handles.append(h)
-        labels.append(pid)
-    if handles:
-        plt.legend(
-            handles,
-            labels,
-            title="Sampled players",
-            loc="best",
-            fontsize=8,
-        )
-
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
-    print(f"[INFO] saved 2D player plot to: {save_path}")
-
-
-def plot_latent_3d_players(
-    latents: np.ndarray,
-    player_ids: list[str],
-    save_path: Path,
-):
-    """
-    Plot the 3D latent projection (PCA): color = player ID
-    This plot is to see which points belong to the same player.
-    Only samples top 5 players by data size for visualization.
-    """
-    from sklearn.decomposition import PCA
-
-    print("[INFO] plotting 3D latent projection by PLAYER (PCA)...")
-    
-    if latents.shape[1] < 3:
-        print("[WARN] latent_dim < 3, 3D PCA may not be able to visualize properly.")
-    
-    # Count data points per player and select top 5 by data size
-    from collections import Counter
-    player_counts = Counter(player_ids)
-    # Sort by count (descending) and take top 5
-    top_players = sorted(player_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-    sampled_players = sorted([pid for pid, _ in top_players])
-    player_sizes = {pid: count for pid, count in top_players}
-    
-    # Filter latents and player_ids to only include sampled players
-    mask = np.array([pid in sampled_players for pid in player_ids])
-    filtered_latents = latents[mask]
-    filtered_player_ids = [pid for pid, m in zip(player_ids, mask) if m]
-    
-    print(f"[INFO] sampling top {len(sampled_players)} players by data size: {[(pid, player_sizes[pid]) for pid in sampled_players]}")
-    
-    pca = PCA(n_components=3, random_state=42)
-    lat_3d = pca.fit_transform(filtered_latents)  # [N, 3]
-
-    # Map player_id -> index for sampled players
-    player_to_idx = {pid: i for i, pid in enumerate(sampled_players)}
-    player_indices = np.array([player_to_idx[pid] for pid in filtered_player_ids])
-
-    # Color map: loop through the number of players using tab20
-    cmap = plt.get_cmap("tab20")
-    colors = [cmap(i % cmap.N) for i in player_indices]
-
-    fig = plt.figure(figsize=(9, 7))
-    ax = fig.add_subplot(111, projection="3d")  # type: ignore
-
-    p = ax.scatter(
-        lat_3d[:, 0],
-        lat_3d[:, 1],
-        lat_3d[:, 2],
-        c=colors,
-        s=6,
-        alpha=0.8,
-    )
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    ax.set_zlabel("PC3")
-    ax.set_title(f"Latent Space (PCA 3D, colored by player - top {len(sampled_players)} players by data size)")
-
-    # Show legend for all sampled players
-    handles = []
-    labels_legend = []
-    for pid in sampled_players:
-        idx = [j for j, p in enumerate(filtered_player_ids) if p == pid]
-        if not idx:
-            continue
-        color = colors[idx[0]]
-        h = plt.Line2D(
-            [], [], marker="o", linestyle="", markersize=5, color=color
-        )
-        handles.append(h)
-        labels_legend.append(pid)
-    if handles:
-        ax.legend(
-            handles,
-            labels_legend,
-            title="Sampled players",
-            loc="best",
-            fontsize=8,
-        )
-
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
-    print(f"[INFO] saved 3D player plot to: {save_path}")
-
-
-def plot_latent_3d_clusters(
-    latents: np.ndarray,
-    labels: np.ndarray,
-    save_path: Path,
-):
-    """
-    Plot the 3D latent projection (PCA): color = cluster ID
-    """
-    from sklearn.decomposition import PCA
-
-    print("[INFO] plotting 3D latent projection by CLUSTER (PCA)...")
-    if latents.shape[1] < 3:
-        print("[WARN] latent_dim < 3, 3D PCA may not be able to visualize properly.")
-
-    pca = PCA(n_components=3, random_state=42)
-    lat_3d = pca.fit_transform(latents)  # [N, 3]
-
-    fig = plt.figure(figsize=(9, 7))
-    ax = fig.add_subplot(111, projection="3d")  # type: ignore
-
-    p = ax.scatter(
-        lat_3d[:, 0],
-        lat_3d[:, 1],
-        lat_3d[:, 2],
-        c=labels,
-        s=6,
-        alpha=0.8,
-        cmap="tab10",
-    )
-    fig.colorbar(p, ax=ax, label="Cluster ID")
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    ax.set_zlabel("PC3")
-    ax.set_title("Latent Space (PCA 3D, colored by cluster)")
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
-    print(f"[INFO] saved 3D cluster plot to: {save_path}")
+    return features, latents, meta, non_trajectory_features
 
 
 def extract_player_type(path_str: str) -> str | None:
-    """
-    Extract player type from path string.
-    Returns 'runner', 'killer', or 'collector' if found, None otherwise.
-    """
+    """Extract player type from path string."""
     path_lower = path_str.lower()
     if "runner" in path_lower:
         return "runner"
@@ -441,201 +177,140 @@ def extract_player_type(path_str: str) -> str | None:
     return None
 
 
-def plot_latent_2d_player_types(
-    latents: np.ndarray,
+def assign_players_to_clusters(
     meta: list[dict],
-    save_path: Path,
-):
+    labels: np.ndarray,
+    non_trajectory_features: np.ndarray | None = None,
+) -> list[dict]:
     """
-    Plot the 2D latent projection (PCA): color = player type (runner, killer, collector).
-    Only includes traces that have a player type in the filename.
-    """
-    from sklearn.decomposition import PCA
-
-    print("[INFO] plotting 2D latent projection by PLAYER TYPE (PCA)...")
+    For each player, count trajectories in each cluster and assign to majority cluster.
     
-    # Extract player types and filter
-    player_types = []
-    valid_indices = []
+    Args:
+        meta: List of metadata dictionaries
+        labels: Cluster labels for each trajectory
+        non_trajectory_features: Optional array of non-trajectory features (None for latent_only mode)
+    
+    Returns:
+        List of dicts with player_id, cluster, mean_non_trajectory_features, player_type_counts
+    """
+    # Group trajectories by player
+    player_trajectories = defaultdict(list)
     for i, m in enumerate(meta):
-        player_type = extract_player_type(m["path"])
-        if player_type is not None:
-            player_types.append(player_type)
-            valid_indices.append(i)
+        player_id = m["player_id"]
+        # Extract raw (non-normalized) numeric features from metadata
+        # (Always extract from metadata, regardless of mode, for CSV output)
+        raw_features = [
+            1.0 if m.get("status") == "WIN" else 0.0,
+            1.0 if m.get("status") == "LOSE" else 0.0,
+            1.0 if m.get("status") == "TIME_OUT" else 0.0,
+            m.get("completing_ratio", 0.0),
+            float(m.get("kills", 0)),
+            float(m.get("kills_by_fire", 0)),
+            float(m.get("kills_by_stomp", 0)),
+            float(m.get("kills_by_shell", 0)),
+            float(m.get("lives", 0)),
+        ]
+        player_trajectories[player_id].append({
+            "index": i,
+            "cluster": int(labels[i]),
+            "player_type": extract_player_type(m["path"]),
+            "raw_features": raw_features,  # Use raw (non-normalized) values
+            "length": m["length"],
+        })
     
-    if not valid_indices:
-        print("[WARN] No traces found with player type (runner/killer/collector) in filename. Skipping plot.")
-        return
+    results = []
+    for player_id, trajectories in player_trajectories.items():
+        # Count trajectories per cluster
+        cluster_counts = Counter(t["cluster"] for t in trajectories)
+        majority_cluster = cluster_counts.most_common(1)[0][0]
+        
+        # Calculate mean non-trajectory features for this player (using raw values)
+        player_features = np.array([t["raw_features"] for t in trajectories])
+        mean_features = player_features.mean(axis=0).tolist()
+        
+        # Calculate mean trajectory length for this player
+        trajectory_lengths = [t["length"] for t in trajectories]
+        mean_trajectory_length = np.mean(trajectory_lengths)
+        
+        # Total number of runs (trajectories) for this player
+        total_runs = len(trajectories)
+        
+        # Count trajectories by player type and calculate ratios
+        player_type_counts = Counter(t["player_type"] for t in trajectories if t["player_type"] is not None)
+        total_typed_trajectories = sum(player_type_counts.values())
+        
+        # Calculate ratios (percentages) for each player type
+        if total_typed_trajectories > 0:
+            runner_ratio = player_type_counts.get("runner", 0) / total_typed_trajectories
+            killer_ratio = player_type_counts.get("killer", 0) / total_typed_trajectories
+            collector_ratio = player_type_counts.get("collector", 0) / total_typed_trajectories
+        else:
+            runner_ratio = killer_ratio = collector_ratio = 0.0
+        
+        results.append({
+            "player_id": player_id,
+            "cluster": majority_cluster,
+            "mean_non_trajectory_features": mean_features,
+            "mean_trajectory_length": mean_trajectory_length,
+            "total_runs": total_runs,
+            "runner_ratio": runner_ratio,
+            "killer_ratio": killer_ratio,
+            "collector_ratio": collector_ratio,
+        })
     
-    # Filter latents to only include valid traces
-    filtered_latents = latents[valid_indices]
-    
-    print(f"[INFO] Found {len(filtered_latents)} traces with player types: {dict(zip(*np.unique(player_types, return_counts=True)))}")
-    
-    pca = PCA(n_components=2, random_state=42)
-    lat_2d = pca.fit_transform(filtered_latents)  # [N, 2]
+    return sorted(results, key=lambda x: (x["cluster"], x["player_id"]))
 
-    # Map player type to color
-    type_to_color = {"runner": 0, "killer": 1, "collector": 2}
-    type_colors = [type_to_color[pt] for pt in player_types]
-    
-    # Use a discrete colormap for the 3 types
-    cmap = plt.get_cmap("Set1")
-    vmin, vmax = -0.5, 2.5
 
-    plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(
-        lat_2d[:, 0],
-        lat_2d[:, 1],
-        c=type_colors,
-        s=10,
-        alpha=0.8,
-        cmap="Set1",
-        vmin=vmin,
-        vmax=vmax,
-    )
-    
-    # Create custom legend with normalized colors to match scatter plot
-    from matplotlib.patches import Patch
-    from matplotlib.colors import Normalize
-    norm = Normalize(vmin=vmin, vmax=vmax)
-    legend_elements = [
-        Patch(facecolor=cmap(norm(0)), label="Runner"),
-        Patch(facecolor=cmap(norm(1)), label="Killer"),
-        Patch(facecolor=cmap(norm(2)), label="Collector"),
+def save_results_to_csv(results: list[dict], output_path: Path, n_clusters: int):
+    """Save clustering results to CSV file."""
+    # Create feature column names
+    feature_names = [
+        "status_WIN", "status_LOSE", "status_timeout",
+        "completing_ratio", "kills", "kills_by_fire",
+        "kills_by_stomp", "kills_by_shell", "lives"
     ]
-    plt.legend(handles=legend_elements, loc="best")
     
-    plt.xlabel("PC1")
-    plt.ylabel("PC2")
-    plt.title("Latent Space (PCA 2D, colored by player type)")
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
-    print(f"[INFO] saved 2D player type plot to: {save_path}")
-
-
-def plot_latent_3d_player_types(
-    latents: np.ndarray,
-    meta: list[dict],
-    save_path: Path,
-):
-    """
-    Plot the 3D latent projection (PCA): color = player type (runner, killer, collector).
-    Only includes traces that have a player type in the filename.
-    """
-    from sklearn.decomposition import PCA
-
-    print("[INFO] plotting 3D latent projection by PLAYER TYPE (PCA)...")
+    with output_path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        
+        # Header
+        header = [
+            "player_id",
+            "cluster",
+        ] + [f"mean_{name}" for name in feature_names] + [
+            "mean_trajectory_length",
+            "total_runs",
+            "runner_ratio",
+            "killer_ratio",
+            "collector_ratio",
+        ]
+        writer.writerow(header)
+        
+        # Data rows
+        for result in results:
+            row = [
+                result["player_id"],
+                result["cluster"],
+            ] + result["mean_non_trajectory_features"] + [
+                result["mean_trajectory_length"],
+                result["total_runs"],
+                result["runner_ratio"],
+                result["killer_ratio"],
+                result["collector_ratio"],
+            ]
+            writer.writerow(row)
     
-    if latents.shape[1] < 3:
-        print("[WARN] latent_dim < 3, 3D PCA may not be able to visualize properly.")
-    
-    # Extract player types and filter
-    player_types = []
-    valid_indices = []
-    for i, m in enumerate(meta):
-        player_type = extract_player_type(m["path"])
-        if player_type is not None:
-            player_types.append(player_type)
-            valid_indices.append(i)
-    
-    if not valid_indices:
-        print("[WARN] No traces found with player type (runner/killer/collector) in filename. Skipping plot.")
-        return
-    
-    # Filter latents to only include valid traces
-    filtered_latents = latents[valid_indices]
-    
-    print(f"[INFO] Found {len(filtered_latents)} traces with player types: {dict(zip(*np.unique(player_types, return_counts=True)))}")
-    
-    pca = PCA(n_components=3, random_state=42)
-    lat_3d = pca.fit_transform(filtered_latents)  # [N, 3]
-
-    # Map player type to color
-    type_to_color = {"runner": 0, "killer": 1, "collector": 2}
-    type_colors = [type_to_color[pt] for pt in player_types]
-    
-    # Use a discrete colormap for the 3 types
-    cmap = plt.get_cmap("Set1")
-    vmin, vmax = -0.5, 2.5
-
-    fig = plt.figure(figsize=(9, 7))
-    ax = fig.add_subplot(111, projection="3d")  # type: ignore
-
-    p = ax.scatter(
-        lat_3d[:, 0],
-        lat_3d[:, 1],
-        lat_3d[:, 2],
-        c=type_colors,
-        s=6,
-        alpha=0.8,
-        cmap="Set1",
-        vmin=vmin,
-        vmax=vmax,
-    )
-    
-    # Create custom legend with normalized colors to match scatter plot
-    from matplotlib.patches import Patch
-    from matplotlib.colors import Normalize
-    norm = Normalize(vmin=vmin, vmax=vmax)
-    legend_elements = [
-        Patch(facecolor=cmap(norm(0)), label="Runner"),
-        Patch(facecolor=cmap(norm(1)), label="Killer"),
-        Patch(facecolor=cmap(norm(2)), label="Collector"),
-    ]
-    ax.legend(handles=legend_elements, loc="best")
-    
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    ax.set_zlabel("PC3")
-    ax.set_title("Latent Space (PCA 3D, colored by player type)")
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
-    print(f"[INFO] saved 3D player type plot to: {save_path}")
-
-
-def run_kmeans(latents: np.ndarray, n_clusters: int, random_state: int = 42):
-    from sklearn.cluster import KMeans
-
-    kmeans = KMeans(
-        n_clusters=n_clusters,
-        random_state=random_state,
-        n_init="auto",
-    )
-    labels = kmeans.fit_predict(latents)
-    return labels, kmeans
-
-
-def aggregate_by_player(meta, labels):
-    """
-    Create a representative cluster for each player based on the cluster labels for each trace.
-    Here, we use the "majority vote (most frequent cluster)" as the representative cluster.
-    """
-    per_player = defaultdict(list)
-    for m, c in zip(meta, labels):
-        per_player[m["player_id"]].append(int(c))
-
-    player_clusters = {}
-    for pid, clusters in per_player.items():
-        # Use the most frequent value as the representative
-        vals, counts = np.unique(clusters, return_counts=True)
-        majority_cluster = int(vals[np.argmax(counts)])
-        player_clusters[pid] = {
-            "majority_cluster": majority_cluster,
-            "cluster_hist": {int(v): int(c) for v, c in zip(vals, counts)},
-            "num_traces": int(len(clusters)),
-        }
-    return player_clusters
+    print(f"[INFO] Saved results to {output_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Cluster players using combined features and assign each player to majority cluster"
+    )
     parser.add_argument(
         "--n_clusters",
         type=int,
-        default=8,
+        required=True,
         help="Number of clusters (k-means k)",
     )
     parser.add_argument(
@@ -644,41 +319,95 @@ def main():
         default="clusters",
         help="Directory to save the clustering results",
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["latent_only", "combined"],
+        default="combined",
+        help="Clustering mode: 'latent_only' uses only trajectory latents, 'combined' uses latents + game statistics",
+    )
+    parser.add_argument(
+        "--no_time_out",
+        action="store_true",
+        help="Filter out TIME_OUT traces before clustering/PCA",
+    )
     args = parser.parse_args()
 
     device = torch.device(train_config.device if torch.cuda.is_available() else "cpu")
-
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create mode-specific subdirectory
+    mode_dir = output_dir / args.mode
+    mode_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1) extract all features (latent + game statistics)
-    print("[INFO] extracting all features (latent vectors + game statistics)...")
-    features, latents, meta = extract_all_features(device)
+    # Extract features based on mode
+    if args.mode == "latent_only":
+        print("[INFO] Extracting trajectory latent vectors only...")
+        latents, meta = extract_latent(device, normalize=True)
+        features = latents
+        non_trajectory_features = None
+        print(f"[INFO] Using {features.shape[1]} latent dimensions for clustering")
+        
+        # Load game statistics into metadata for CSV output (even though not used for clustering)
+        print("[INFO] Loading game statistics for CSV output...")
+        for m in meta:
+            path = Path(m["path"])
+            try:
+                with path.open("r") as f:
+                    data = json.load(f)
+                m.update({
+                    "status": data.get("status", "UNKNOWN"),
+                    "completing_ratio": data.get("completing-ratio", 0.0),
+                    "kills": data.get("#kills", 0),
+                    "kills_by_fire": data.get("#kills-by-fire", 0),
+                    "kills_by_stomp": data.get("#kills-by-stomp", 0),
+                    "kills_by_shell": data.get("#kills-by-shell", 0),
+                    "lives": data.get("lives", 0),
+                })
+            except Exception as e:
+                print(f"[WARN] Failed to load features from {path}: {e}")
+                # Set defaults if loading fails
+                m.update({
+                    "status": "UNKNOWN",
+                    "completing_ratio": 0.0,
+                    "kills": 0,
+                    "kills_by_fire": 0,
+                    "kills_by_stomp": 0,
+                    "kills_by_shell": 0,
+                    "lives": 0,
+                })
+    else:  # combined
+        print("[INFO] Extracting combined features (latent vectors + game statistics)...")
+        features, latents, meta, non_trajectory_features = extract_all_features(device)
+        print(f"[INFO] Using {features.shape[1]} combined features for clustering (latent: {latents.shape[1]}, additional: {features.shape[1] - latents.shape[1]})")
 
-    # Extract the player_id list
-    player_ids = [m["player_id"] for m in meta]
+    if args.no_time_out:
+        valid_mask = np.array([m.get("status") != "TIME_OUT" for m in meta])
+        features = features[valid_mask]
+        latents = latents[valid_mask]
+        meta = [m for m, v in zip(meta, valid_mask) if v]
+        if non_trajectory_features is not None:
+            non_trajectory_features = non_trajectory_features[valid_mask]
 
-    # k-means clustering on combined features
+    # K-means clustering
     from sklearn.cluster import KMeans
-    print(f"[INFO] Clustering with {features.shape[1]} features per sample...")
-    kmeans = KMeans(n_clusters=args.n_clusters, random_state=42)
+    print(f"[INFO] Running KMeans clustering with k={args.n_clusters}...")
+    kmeans = KMeans(n_clusters=args.n_clusters, random_state=42, n_init="auto")
     labels = kmeans.fit_predict(features)
 
-    # Show simple statistics for each cluster (for a rough idea)
-    print("\n[INFO] cluster statistics:")
+    # Show cluster statistics
+    print("\n[INFO] Cluster statistics:")
     for k in range(args.n_clusters):
         idx = labels == k
         n_points = int(idx.sum())
-        players_in_cluster = sorted({player_ids[i] for i in range(len(player_ids)) if idx[i]})
-        print(f"  - Cluster {k}: {n_points} points, {len(players_in_cluster)} players")
+        player_ids = [m["player_id"] for m in meta]
+        players_in_cluster = len(set(player_ids[i] for i in range(len(player_ids)) if idx[i]))
+        print(f"  - Cluster {k}: {n_points} trajectories, {players_in_cluster} players")
 
-    # Save the results
-    output_dir = Path("clusters")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Save the cluster assignments for each sample
-    sample_clusters_path = output_dir / f"trajectory_clusters_k{args.n_clusters}.json"
-    with sample_clusters_path.open("w") as f:
+    # Save trajectory-level cluster assignments (for statistics consistency)
+    trajectory_clusters_path = mode_dir / f"trajectory_clusters_k{args.n_clusters}.json"
+    with trajectory_clusters_path.open("w") as f:
         json.dump(
             [
                 {
@@ -699,38 +428,20 @@ def main():
             f,
             indent=2,
         )
-    print(f"[INFO] saved sample-level clusters to: {sample_clusters_path}")
+    print(f"[INFO] Saved trajectory-level clusters to: {trajectory_clusters_path}")
 
-    # Aggregate the cluster distributions for each player (if needed)
-    player_clusters = defaultdict(list)
-    for m, c in zip(meta, labels):
-        player_clusters[m["player_id"]].append(int(c))
-    player_clusters_path = output_dir / f"player_clusters_k{args.n_clusters}.json"
-    with player_clusters_path.open("w") as f:
-        json.dump(player_clusters, f, indent=2)
-    print(f"[INFO] saved player-level clusters to: {player_clusters_path}")
+    # Assign players to clusters
+    print("\n[INFO] Assigning players to clusters...")
+    results = assign_players_to_clusters(meta, labels, non_trajectory_features)
+    
+    # Save results to CSV with mode in filename
+    output_path = output_dir / f"player_clusters_{args.mode}_k{args.n_clusters}.csv"
+    save_results_to_csv(results, output_path, args.n_clusters)
+    
+    print(f"\n[INFO] Processed {len(results)} players")
+    print("[INFO] Done.")
 
-    # Save the raw latent vectors, combined features, and centers
-    np.save(output_dir / "latents.npy", latents)
-    np.save(output_dir / "combined_features.npy", features)
-    np.save(output_dir / f"kmeans_centers_k{args.n_clusters}.npy", kmeans.cluster_centers_)
-
-    # ==== Start plotting ====
-    plot_2d_cluster_path = output_dir / f"latent_pca_2d_clusters_k{args.n_clusters}.png"
-    plot_2d_player_path = output_dir / f"latent_pca_2d_players_k{args.n_clusters}.png"
-    plot_3d_cluster_path = output_dir / f"latent_pca_3d_clusters_k{args.n_clusters}.png"
-    plot_3d_player_path = output_dir / f"latent_pca_3d_players_k{args.n_clusters}.png"
-    plot_2d_type_path = output_dir / f"latent_pca_2d_player_types_k{args.n_clusters}.png"
-    plot_3d_type_path = output_dir / f"latent_pca_3d_player_types_k{args.n_clusters}.png"
-
-    plot_latent_2d_clusters(latents, labels, plot_2d_cluster_path)
-    plot_latent_2d_players(latents, player_ids, plot_2d_player_path)
-    plot_latent_3d_clusters(latents, labels, plot_3d_cluster_path)
-    plot_latent_3d_players(latents, player_ids, plot_3d_player_path)
-    plot_latent_2d_player_types(latents, meta, plot_2d_type_path)
-    plot_latent_3d_player_types(latents, meta, plot_3d_type_path)
-
-    print("[INFO] done.")
 
 if __name__ == "__main__":
     main()
+

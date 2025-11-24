@@ -119,6 +119,7 @@ def main():
         model.train()
         epoch_train_losses = []
         running_loss = 0.0
+        sched = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=train_config.num_epochs)
 
         pbar = tqdm(
             enumerate(train_dataloader),
@@ -132,11 +133,11 @@ def main():
             lengths = batch["lengths"].to(device)
 
             optimizer.zero_grad()
-            recon, _ = model(trajectories, lengths)
+            recon, latent = model(trajectories, lengths)
 
             loss = masked_mse_loss(recon, trajectories, lengths)
-
             loss.backward()
+            sched.step()
             
             if train_config.gradient_clip > 0:
                 torch.nn.utils.clip_grad_norm_(
@@ -177,27 +178,28 @@ def main():
         
         current_lr = optimizer.param_groups[0]['lr']
         
-        torch.save(
-            {
-                "model_state_dict": model.state_dict(),
-                "model_config": model_config,
-                "data_config": data_config,
-                "train_config": train_config,
-                "epoch": epoch,
-                "train_losses": train_losses,
-                "val_losses": val_losses,
-                "best_val_loss": best_val_loss,
-            },
-            train_config.model_save_path,
-        )
+        if epoch % train_config.save_interval == 0:
+            torch.save(
+                {
+                    "model_state_dict": model.state_dict(),
+                    "model_config": model_config,
+                    "data_config": data_config,
+                    "train_config": train_config,
+                    "epoch": epoch,
+                    "train_losses": train_losses,
+                    "val_losses": val_losses,
+                    "best_val_loss": best_val_loss,
+                },
+                train_config.model_save_path,
+            )
+            print(f"Model saved to {train_config.model_save_path}")
         
         status = "★ BEST" if is_best else ""
         print(
             f"\n[Epoch {epoch}/{train_config.num_epochs}] "
             f"Train Loss: {epoch_train_avg:.6f} | "
             f"Val Loss: {val_loss:.6f} {status} | "
-            f"LR: {current_lr:.2e} | "
-            f"Model saved to {train_config.model_save_path}"
+            f"LR: {current_lr:.2e}"
         )
     
     # Plot training curves
