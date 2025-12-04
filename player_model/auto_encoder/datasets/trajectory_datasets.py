@@ -47,19 +47,30 @@ class TrajectoryDataset(Dataset):
         if not self.samples:
             raise RuntimeError(f"No valid samples found under {cfg.data_root}")
 
-        # Compute normalization statistics
+        # Compute per-trajectory normalization statistics (min-max to [0, 1])
+        # Each trajectory is normalized independently to [0, 1] per dimension using:
+        #   normalized = (original - min) / (max - min)
+        # This preserves the relative structure within each trajectory while making
+        # the scale consistent across trajectories. The offset (min) and scale (max-min)
+        # are saved per-trajectory to allow denormalization back to original coordinates.
         if self.normalize:
-            all_coords = []
             for sample in self.samples:
-                all_coords.extend(sample["trace"])
-            all_coords = np.array(all_coords, dtype=np.float32)
-            self.mean = torch.tensor(all_coords.mean(axis=0), dtype=torch.float32)
-            self.std = torch.tensor(all_coords.std(axis=0), dtype=torch.float32)
-            # Avoid division by zero
-            self.std = torch.clamp(self.std, min=1e-8)
+                trace = np.array(sample["trace"], dtype=np.float32)
+                # Compute min and max per dimension
+                trace_min = trace.min(axis=0)  # [min_x, min_y]
+                trace_max = trace.max(axis=0)  # [max_x, max_y]
+                trace_range = trace_max - trace_min
+                # Avoid division by zero - if range is 0, set scale to 1
+                trace_range = np.where(trace_range < 1e-8, 1.0, trace_range)
+                # Store offset (min) and scale (range) for denormalization
+                sample["normalization_offset"] = torch.tensor(trace_min, dtype=torch.float32)
+                sample["normalization_scale"] = torch.tensor(trace_range, dtype=torch.float32)
         else:
-            self.mean = torch.zeros(2, dtype=torch.float32)
-            self.std = torch.ones(2, dtype=torch.float32)
+            # If not normalizing, set identity transforms
+            for sample in self.samples:
+                trace = np.array(sample["trace"], dtype=np.float32)
+                sample["normalization_offset"] = torch.zeros(2, dtype=torch.float32)
+                sample["normalization_scale"] = torch.ones(2, dtype=torch.float32)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -68,23 +79,33 @@ class TrajectoryDataset(Dataset):
         sample = self.samples[idx]
         trace = sample["trace"]
         traj_tensor = torch.tensor(trace, dtype=torch.float32)
+        
+        # Get per-trajectory normalization parameters
+        offset = sample["normalization_offset"]
+        scale = sample["normalization_scale"]
 
-        # Normalize the trajectory
+        # Normalize the trajectory to [0, 1] per dimension
         if self.normalize:
-            traj_tensor = (traj_tensor - self.mean) / self.std
+            traj_tensor = (traj_tensor - offset) / scale
 
         return {
             "player_id": sample["player_id"],
             "trajectory": traj_tensor,
             "length": traj_tensor.shape[0],
             "path": sample["path"],
+            "normalization_offset": offset,  # Store for denormalization
+            "normalization_scale": scale,     # Store for denormalization
         }
     
-    def denormalize(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Convert normalized tensor back to original scale."""
-        if self.normalize:
-            return tensor * self.std + self.mean
-        return tensor
+    def denormalize(self, tensor: torch.Tensor, offset: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+        """Convert normalized tensor back to original scale using per-trajectory parameters.
+        
+        Args:
+            tensor: Normalized tensor of shape [B, T, D] or [T, D]
+            offset: Per-trajectory offset (min) of shape [B, D] or [D]
+            scale: Per-trajectory scale (range) of shape [B, D] or [D]
+        """
+        return tensor * scale + offset
 
 
 def trajectory_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -92,6 +113,10 @@ def trajectory_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     lengths = torch.tensor([t.shape[0] for t in trajectories], dtype=torch.long)
     player_ids = [b["player_id"] for b in batch]
     paths = [b["path"] for b in batch]
+    
+    # Collect normalization parameters for each trajectory
+    offsets = torch.stack([b["normalization_offset"] for b in batch])  # [B, D]
+    scales = torch.stack([b["normalization_scale"] for b in batch])    # [B, D]
 
     padded = pad_sequence(trajectories, batch_first=True)
 
@@ -100,4 +125,6 @@ def trajectory_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         "lengths": lengths,
         "player_ids": player_ids,
         "paths": paths,
+        "normalization_offsets": offsets,  # [B, D]
+        "normalization_scales": scales,     # [B, D]
     }

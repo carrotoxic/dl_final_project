@@ -30,12 +30,13 @@ class LSTMAutoencoder(nn.Module):
         self.to_latent = nn.Sequential(
             nn.Linear(cfg.hidden_dim * 2, cfg.hidden_dim * 2),
             nn.ReLU(),
-            nn.Linear(cfg.hidden_dim * 2, cfg.latent_dim),
+            nn.Linear(cfg.hidden_dim * 2, cfg.hidden_dim),
+            nn.ReLU(),
         )
 
 
         self.decoder_lstm = nn.LSTM(
-            input_size=cfg.latent_dim,
+            input_size=cfg.hidden_dim,
             hidden_size=cfg.hidden_dim,
             num_layers=cfg.num_layers,
             batch_first=True,

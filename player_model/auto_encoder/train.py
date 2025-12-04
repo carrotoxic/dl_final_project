@@ -1,7 +1,7 @@
 import os
 
 import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Subset
 from torch import optim
 from tqdm import tqdm
 
@@ -15,50 +15,9 @@ from .datasets.trajectory_datasets import (
     trajectory_collate_fn,
 )
 from .models.lstm_autoencoder import LSTMAutoencoder
+from .utils.losses import masked_mse_loss
+from .utils.metrics import evaluate, compute_training_metrics
 from .utils.plot import plot_train_val_loss
-
-
-def masked_mse_loss(
-    recon: torch.Tensor,
-    target: torch.Tensor,
-    lengths: torch.Tensor,
-) -> torch.Tensor:
-    device = recon.device
-    B, T_max, D = recon.shape
-    lengths = lengths.to(device)
-
-    mask = torch.arange(T_max, device=device).unsqueeze(0).expand(B, T_max)
-    mask = (mask < lengths.unsqueeze(1)).float().unsqueeze(-1)
-
-    diff = (recon - target) ** 2
-    diff = diff * mask
-
-    per_sample_sum = diff.sum(dim=(1, 2))
-
-    valid_elems = (lengths * D).clamp(min=1)
-    per_sample_mse = per_sample_sum / valid_elems
-    loss = per_sample_mse.mean()
-    return loss
-
-
-def evaluate(model, dataloader, device):
-    """Evaluate model on validation set."""
-    model.eval()
-    total_loss = 0.0
-    num_batches = 0
-    
-    with torch.no_grad():
-        for batch in dataloader:
-            trajectories = batch["trajectories"].to(device)
-            lengths = batch["lengths"].to(device)
-            
-            recon, _ = model(trajectories, lengths)
-            loss = masked_mse_loss(recon, trajectories, lengths)
-            total_loss += loss.item()
-            num_batches += 1
-    
-    avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-    return avg_loss
 
 
 def main():
@@ -66,11 +25,10 @@ def main():
 
     device = torch.device(train_config.device if torch.cuda.is_available() else "cpu")
 
-    # Load full dataset to compute normalization stats on all data
+    # Load full dataset with per-trajectory normalization to [0, 1]
     full_dataset = TrajectoryDataset(data_config, normalize=True)
     print(f"Loaded {len(full_dataset)} total samples")
-    if full_dataset.normalize:
-        print(f"Normalization stats - Mean: {full_dataset.mean.numpy()}, Std: {full_dataset.std.numpy()}")
+    print(f"Using per-trajectory min-max normalization to [0, 1] per dimension")
     
     # Split into train (90%) and validation (10%)
     train_size = int(1.0 * len(full_dataset))
@@ -80,9 +38,7 @@ def main():
         [train_size, val_size],
         generator=torch.Generator().manual_seed(42)  # For reproducibility
     )
-    
-    print(f"Train samples: {len(train_dataset)}, Validation samples: {len(val_dataset)}")
-    
+
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=train_config.batch_size,
@@ -107,6 +63,10 @@ def main():
         lr=train_config.lr,
         weight_decay=train_config.weight_decay,
     )
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=train_config.num_epochs,
+    )
 
     # Track losses for plotting
     train_losses = []
@@ -119,7 +79,6 @@ def main():
         model.train()
         epoch_train_losses = []
         running_loss = 0.0
-        sched = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=train_config.num_epochs)
 
         pbar = tqdm(
             enumerate(train_dataloader),
@@ -137,7 +96,7 @@ def main():
 
             loss = masked_mse_loss(recon, trajectories, lengths)
             loss.backward()
-            sched.step()
+            scheduler.step()
             
             if train_config.gradient_clip > 0:
                 torch.nn.utils.clip_grad_norm_(
@@ -167,8 +126,13 @@ def main():
         epoch_train_avg = sum(epoch_train_losses) / len(epoch_train_losses) if epoch_train_losses else 0.0
         train_losses.append(epoch_train_avg)
         
+        # Compute training metrics in original space
+        train_euclidean_dist = compute_training_metrics(model, train_dataloader, device)
+        
         # Evaluate on validation set
-        val_loss = evaluate(model, val_dataloader, device)
+        val_results = evaluate(model, val_dataloader, device, compute_original_metrics=True)
+        val_loss = val_results["normalized_loss"]
+        val_euclidean_dist = val_results.get("mean_euclidean_distance", 0.0)
         val_losses.append(val_loss)
         
         # Track best validation loss
@@ -197,8 +161,10 @@ def main():
         status = "★ BEST" if is_best else ""
         print(
             f"\n[Epoch {epoch}/{train_config.num_epochs}] "
-            f"Train Loss: {epoch_train_avg:.6f} | "
-            f"Val Loss: {val_loss:.6f} {status} | "
+            f"Train Loss (norm): {epoch_train_avg:.6f} | "
+            f"Train Euclidean Dist: {train_euclidean_dist:.4f} | "
+            f"Val Loss (norm): {val_loss:.6f} {status} | "
+            f"Val Euclidean Dist: {val_euclidean_dist:.4f} | "
             f"LR: {current_lr:.2e}"
         )
     

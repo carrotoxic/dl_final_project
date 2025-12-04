@@ -14,8 +14,7 @@ class DataConfig:
 class ModelConfig:
     input_dim: int = 2
     frame_hidden_dim: int = 32
-    hidden_dim: int =  32
-    latent_dim: int = 16
+    hidden_dim: int =  128
     num_layers: int = 1
     use_batch_norm: bool = False
 
@@ -23,8 +22,8 @@ class ModelConfig:
 @dataclass
 class TrainConfig:
     batch_size: int = 128
-    num_epochs: int = 300
-    lr: float = 1e-2
+    num_epochs: int = 1000
+    lr: float = 1e-3
     weight_decay: float = 0
     device: str = "cuda"
     log_interval: int = 50
