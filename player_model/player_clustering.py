@@ -104,6 +104,7 @@ def extract_all_features(device: torch.device):
             kills_by_stomp = data.get("#kills-by-stomp", 0)
             kills_by_shell = data.get("#kills-by-shell", 0)
             lives = data.get("lives", 0)
+            coins = data.get("#coins", data.get("currentCoins", 0))  # Try both field names
             
             status_list.append(status)
             numeric_features.append([
@@ -113,6 +114,7 @@ def extract_all_features(device: torch.device):
                 float(kills_by_stomp),
                 float(kills_by_shell),
                 float(lives),
+                float(coins),
             ])
             valid_indices.append(i)
             
@@ -124,6 +126,7 @@ def extract_all_features(device: torch.device):
                 "kills_by_stomp": kills_by_stomp,
                 "kills_by_shell": kills_by_shell,
                 "lives": lives,
+                "coins": coins,
             })
         except Exception as e:
             print(f"[WARN] Failed to load features from {path}: {e}")
@@ -160,7 +163,7 @@ def extract_all_features(device: torch.device):
     
     print(f"[INFO] Combined features shape: {features.shape}")
     print(f"[INFO]   - Latent: {latents.shape[1]} dims")
-    print(f"[INFO]   - Non-trajectory: {non_trajectory_features.shape[1]} dims")
+    print(f"[INFO]   - Non-trajectory: {non_trajectory_features.shape[1]} dims (status: 3, numeric: 7)")
     
     return features, latents, meta, non_trajectory_features
 
@@ -209,6 +212,7 @@ def assign_players_to_clusters(
             float(m.get("kills_by_stomp", 0)),
             float(m.get("kills_by_shell", 0)),
             float(m.get("lives", 0)),
+            float(m.get("coins", 0)),
         ]
         player_trajectories[player_id].append({
             "index": i,
@@ -267,7 +271,7 @@ def save_results_to_csv(results: list[dict], output_path: Path, n_clusters: int)
     feature_names = [
         "status_WIN", "status_LOSE", "status_timeout",
         "completing_ratio", "kills", "kills_by_fire",
-        "kills_by_stomp", "kills_by_shell", "lives"
+        "kills_by_stomp", "kills_by_shell", "lives", "coins"
     ]
     
     with output_path.open("w", newline="") as f:
@@ -310,8 +314,8 @@ def main():
     parser.add_argument(
         "--n_clusters",
         type=int,
-        required=True,
-        help="Number of clusters (k-means k)",
+        default=None,
+        help="Number of clusters (k-means k). If not provided, will loop from 2 to 10.",
     )
     parser.add_argument(
         "--output_dir",
@@ -331,15 +335,28 @@ def main():
         action="store_true",
         help="Filter out TIME_OUT traces before clustering/PCA",
     )
+    parser.add_argument(
+        "--method",
+        type=str,
+        choices=["kmeans", "gmm"],
+        default="kmeans",
+        help="Clustering method: 'kmeans' or 'gmm' (Gaussian Mixture Model)",
+    )
     args = parser.parse_args()
 
     device = torch.device(train_config.device if torch.cuda.is_available() else "cpu")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Create mode-specific subdirectory
-    mode_dir = output_dir / args.mode
-    mode_dir.mkdir(parents=True, exist_ok=True)
+    # Create method-specific subdirectory (kmeans or gmm)
+    method_dir = output_dir / args.method
+    method_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Determine cluster range
+    if args.n_clusters is None:
+        cluster_range = range(2, 11)  # 2 to 10
+    else:
+        cluster_range = [args.n_clusters]
 
     # Extract features based on mode
     if args.mode == "latent_only":
@@ -364,6 +381,7 @@ def main():
                     "kills_by_stomp": data.get("#kills-by-stomp", 0),
                     "kills_by_shell": data.get("#kills-by-shell", 0),
                     "lives": data.get("lives", 0),
+                    "coins": data.get("#coins", data.get("currentCoins", 0)),
                 })
             except Exception as e:
                 print(f"[WARN] Failed to load features from {path}: {e}")
@@ -376,6 +394,7 @@ def main():
                     "kills_by_stomp": 0,
                     "kills_by_shell": 0,
                     "lives": 0,
+                    "coins": 0,
                 })
     else:  # combined
         print("[INFO] Extracting combined features (latent vectors + game statistics)...")
@@ -390,56 +409,90 @@ def main():
         if non_trajectory_features is not None:
             non_trajectory_features = non_trajectory_features[valid_mask]
 
-    # K-means clustering
-    from sklearn.cluster import KMeans
-    print(f"[INFO] Running KMeans clustering with k={args.n_clusters}...")
-    kmeans = KMeans(n_clusters=args.n_clusters, random_state=42, n_init="auto")
-    labels = kmeans.fit_predict(features)
+    # Loop through cluster numbers
+    for n_clusters in cluster_range:
+        print(f"\n{'='*80}")
+        print(f"Processing k={n_clusters}")
+        print(f"{'='*80}")
+        
+        # Create mode-specific subdirectory for this k
+        mode_dir = method_dir / args.mode / f"k{n_clusters}"
+        mode_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Clustering
+        if args.method == "kmeans":
+            from sklearn.cluster import KMeans
+            print(f"[INFO] Running KMeans clustering with k={n_clusters}...")
+            print(f"[INFO] KMeans parameters: n_init=100, max_iter=10000, tol=0.0001")
+            clusterer = KMeans(
+                n_clusters=n_clusters,
+                n_init=100,              # 100 restarts as per paper
+                max_iter=10000,          # Maximum iterations as per paper
+                tol=0.0001,              # Tolerance as per paper
+                random_state=42,
+            )
+        else:  # gmm
+            from sklearn.mixture import GaussianMixture
+            print(f"[INFO] Running GMM clustering with k={n_clusters}...")
+            print(f"[INFO] GMM parameters: n_init=100, max_iter=10000, covariance_type='full'")
+            clusterer = GaussianMixture(
+                n_components=n_clusters,
+                n_init=100,              # 100 restarts as per paper
+                max_iter=10000,          # Maximum iterations as per paper
+                covariance_type='full',   # Full covariance as per paper
+                random_state=42,
+            )
+        
+        labels = clusterer.fit_predict(features)
 
-    # Show cluster statistics
-    print("\n[INFO] Cluster statistics:")
-    for k in range(args.n_clusters):
-        idx = labels == k
-        n_points = int(idx.sum())
-        player_ids = [m["player_id"] for m in meta]
-        players_in_cluster = len(set(player_ids[i] for i in range(len(player_ids)) if idx[i]))
-        print(f"  - Cluster {k}: {n_points} trajectories, {players_in_cluster} players")
+        # Show cluster statistics
+        print("\n[INFO] Cluster statistics:")
+        for k in range(n_clusters):
+            idx = labels == k
+            n_points = int(idx.sum())
+            player_ids = [m["player_id"] for m in meta]
+            players_in_cluster = len(set(player_ids[i] for i in range(len(player_ids)) if idx[i]))
+            print(f"  - Cluster {k}: {n_points} trajectories, {players_in_cluster} players")
 
-    # Save trajectory-level cluster assignments (for statistics consistency)
-    trajectory_clusters_path = mode_dir / f"trajectory_clusters_k{args.n_clusters}.json"
-    with trajectory_clusters_path.open("w") as f:
-        json.dump(
-            [
-                {
-                    "player_id": m["player_id"],
-                    "path": str(m["path"]),
-                    "length": m["length"],
-                    "cluster": int(c),
-                    "status": m.get("status", "UNKNOWN"),
-                    "completing_ratio": m.get("completing_ratio", 0.0),
-                    "kills": m.get("kills", 0),
-                    "kills_by_fire": m.get("kills_by_fire", 0),
-                    "kills_by_stomp": m.get("kills_by_stomp", 0),
-                    "kills_by_shell": m.get("kills_by_shell", 0),
-                    "lives": m.get("lives", 0),
-                }
-                for m, c in zip(meta, labels)
-            ],
-            f,
-            indent=2,
-        )
-    print(f"[INFO] Saved trajectory-level clusters to: {trajectory_clusters_path}")
+        # Save trajectory-level cluster assignments (for statistics consistency)
+        trajectory_clusters_path = mode_dir / f"trajectory_clusters_k{n_clusters}.json"
+        with trajectory_clusters_path.open("w") as f:
+            json.dump(
+                [
+                    {
+                        "player_id": m["player_id"],
+                        "path": str(m["path"]),
+                        "length": m["length"],
+                        "cluster": int(c),
+                        "status": m.get("status", "UNKNOWN"),
+                        "completing_ratio": m.get("completing_ratio", 0.0),
+                        "kills": m.get("kills", 0),
+                        "kills_by_fire": m.get("kills_by_fire", 0),
+                        "kills_by_stomp": m.get("kills_by_stomp", 0),
+                        "kills_by_shell": m.get("kills_by_shell", 0),
+                        "lives": m.get("lives", 0),
+                        "coins": m.get("coins", 0),
+                    }
+                    for m, c in zip(meta, labels)
+                ],
+                f,
+                indent=2,
+            )
+        print(f"[INFO] Saved trajectory-level clusters to: {trajectory_clusters_path}")
 
-    # Assign players to clusters
-    print("\n[INFO] Assigning players to clusters...")
-    results = assign_players_to_clusters(meta, labels, non_trajectory_features)
+        # Assign players to clusters
+        print("\n[INFO] Assigning players to clusters...")
+        results = assign_players_to_clusters(meta, labels, non_trajectory_features)
+        
+        # Save results to CSV with mode in filename
+        output_path = mode_dir / f"player_clusters_{args.mode}_k{n_clusters}.csv"
+        save_results_to_csv(results, output_path, n_clusters)
+        
+        print(f"[INFO] Processed {len(results)} players for k={n_clusters}")
     
-    # Save results to CSV with mode in filename
-    output_path = output_dir / f"player_clusters_{args.mode}_k{args.n_clusters}.csv"
-    save_results_to_csv(results, output_path, args.n_clusters)
-    
-    print(f"\n[INFO] Processed {len(results)} players")
-    print("[INFO] Done.")
+    print(f"\n{'='*80}")
+    print(f"[INFO] Done processing all cluster numbers.")
+    print(f"{'='*80}")
 
 
 if __name__ == "__main__":

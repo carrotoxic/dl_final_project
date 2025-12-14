@@ -114,6 +114,7 @@ def extract_all_features(device: torch.device):
             kills_by_stomp = data.get("#kills-by-stomp", 0)
             kills_by_shell = data.get("#kills-by-shell", 0)
             lives = data.get("lives", 0)
+            coins = data.get("#coins", data.get("currentCoins", 0))  # Try both field names
             
             status_list.append(status)
             numeric_features.append([
@@ -123,6 +124,7 @@ def extract_all_features(device: torch.device):
                 float(kills_by_stomp),
                 float(kills_by_shell),
                 float(lives),
+                float(coins),
             ])
             valid_indices.append(i)
             
@@ -135,6 +137,7 @@ def extract_all_features(device: torch.device):
                 "kills_by_stomp": kills_by_stomp,
                 "kills_by_shell": kills_by_shell,
                 "lives": lives,
+                "coins": coins,
             })
         except Exception as e:
             print(f"[WARN] Failed to load features from {path}: {e}")
@@ -174,7 +177,7 @@ def extract_all_features(device: torch.device):
     
     print(f"[INFO] Combined features shape: {features.shape} (latent: {latents.shape[1]}, additional: {additional_features.shape[1]})")
     print(f"[INFO]   - Status one-hot: 3 dims (WIN, LOSE, timeout)")
-    print(f"[INFO]   - Numeric features: 6 dims (completing_ratio, kills, kills_by_fire, kills_by_stomp, kills_by_shell, lives)")
+    print(f"[INFO]   - Numeric features: 7 dims (completing_ratio, kills, kills_by_fire, kills_by_stomp, kills_by_shell, lives, coins)")
     
     return features, latents, meta
 
@@ -632,15 +635,33 @@ def plot_latent_3d_player_types(
 
 
 def run_kmeans(latents: np.ndarray, n_clusters: int, random_state: int = 42):
+    """Run KMeans clustering with paper parameters."""
     from sklearn.cluster import KMeans
 
     kmeans = KMeans(
         n_clusters=n_clusters,
+        n_init=100,              # 100 restarts as per paper
+        max_iter=10000,          # Maximum iterations as per paper
+        tol=0.0001,              # Tolerance as per paper
         random_state=random_state,
-        n_init="auto",
     )
     labels = kmeans.fit_predict(latents)
     return labels, kmeans
+
+
+def run_gmm(latents: np.ndarray, n_clusters: int, random_state: int = 42):
+    """Run GMM clustering with paper parameters."""
+    from sklearn.mixture import GaussianMixture
+
+    gmm = GaussianMixture(
+        n_components=n_clusters,
+        n_init=100,              # 100 restarts as per paper
+        max_iter=10000,          # Maximum iterations as per paper
+        covariance_type='full',   # Full covariance as per paper
+        random_state=random_state,
+    )
+    labels = gmm.fit_predict(latents)
+    return labels, gmm
 
 
 def aggregate_by_player(meta, labels):
@@ -670,8 +691,8 @@ def main():
     parser.add_argument(
         "--n_clusters",
         type=int,
-        default=8,
-        help="Number of clusters (k-means k)",
+        default=None,
+        help="Number of clusters (k-means k). If not provided, will loop from 2 to 10.",
     )
     parser.add_argument(
         "--output_dir",
@@ -691,12 +712,29 @@ def main():
         action="store_true",
         help="Filter out TIME_OUT traces before clustering/PCA",
     )
+    parser.add_argument(
+        "--method",
+        type=str,
+        choices=["kmeans", "gmm"],
+        default="kmeans",
+        help="Clustering method: 'kmeans' or 'gmm' (Gaussian Mixture Model)",
+    )
     args = parser.parse_args()
 
     device = torch.device(train_config.device if torch.cuda.is_available() else "cpu")
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create method-specific subdirectory (kmeans or gmm)
+    method_dir = output_dir / args.method
+    method_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Determine cluster range
+    if args.n_clusters is None:
+        cluster_range = range(2, 11)  # 2 to 10
+    else:
+        cluster_range = [args.n_clusters]
 
     # 1) Extract features based on mode
     if args.mode == "latent_only":
@@ -728,86 +766,117 @@ def main():
     # Extract the player_id list
     player_ids = [m["player_id"] for m in meta]
 
-    # k-means clustering
-    from sklearn.cluster import KMeans
-    print(f"[INFO] Running KMeans clustering with k={args.n_clusters}...")
-    kmeans = KMeans(n_clusters=args.n_clusters, random_state=42, n_init="auto")
-    labels = kmeans.fit_predict(features)
+    # Loop through cluster numbers
+    for n_clusters in cluster_range:
+        print(f"\n{'='*80}")
+        print(f"Processing k={n_clusters}")
+        print(f"{'='*80}")
+        
+        # Create mode-specific subdirectory for this k
+        mode_dir = method_dir / args.mode / f"k{n_clusters}"
+        mode_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Clustering
+        if args.method == "kmeans":
+            from sklearn.cluster import KMeans
+            print(f"[INFO] Running KMeans clustering with k={n_clusters}...")
+            print(f"[INFO] KMeans parameters: n_init=100, max_iter=10000, tol=0.0001")
+            clusterer = KMeans(
+                n_clusters=n_clusters,
+                n_init=100,              # 100 restarts as per paper
+                max_iter=10000,          # Maximum iterations as per paper
+                tol=0.0001,              # Tolerance as per paper
+                random_state=42,
+            )
+        else:  # gmm
+            from sklearn.mixture import GaussianMixture
+            print(f"[INFO] Running GMM clustering with k={n_clusters}...")
+            print(f"[INFO] GMM parameters: n_init=100, max_iter=10000, covariance_type='full'")
+            clusterer = GaussianMixture(
+                n_components=n_clusters,
+                n_init=100,              # 100 restarts as per paper
+                max_iter=10000,          # Maximum iterations as per paper
+                covariance_type='full',   # Full covariance as per paper
+                random_state=42,
+            )
+        
+        labels = clusterer.fit_predict(features)
 
-    # Show simple statistics for each cluster (for a rough idea)
-    print("\n[INFO] cluster statistics:")
-    for k in range(args.n_clusters):
-        idx = labels == k
-        n_points = int(idx.sum())
-        players_in_cluster = sorted({player_ids[i] for i in range(len(player_ids)) if idx[i]})
-        print(f"  - Cluster {k}: {n_points} points, {len(players_in_cluster)} players")
+        # Show simple statistics for each cluster (for a rough idea)
+        print("\n[INFO] cluster statistics:")
+        for k in range(n_clusters):
+            idx = labels == k
+            n_points = int(idx.sum())
+            players_in_cluster = sorted({player_ids[i] for i in range(len(player_ids)) if idx[i]})
+            print(f"  - Cluster {k}: {n_points} points, {len(players_in_cluster)} players")
 
-    # Save the results (use args.output_dir, not hardcoded "clusters")
-    output_dir.mkdir(parents=True, exist_ok=True)
+        # Save the cluster assignments for each sample
+        sample_clusters_path = mode_dir / f"trajectory_clusters_k{n_clusters}.json"
+        with sample_clusters_path.open("w") as f:
+            json.dump(
+                [
+                    {
+                        "player_id": m["player_id"],
+                        "path": str(m["path"]),
+                        "length": m["length"],
+                        "cluster": int(c),
+                        "status": m.get("status", "UNKNOWN"),
+                        "completing_ratio": m.get("completing_ratio", 0.0),
+                        "kills": m.get("kills", 0),
+                        "kills_by_fire": m.get("kills_by_fire", 0),
+                        "kills_by_stomp": m.get("kills_by_stomp", 0),
+                        "kills_by_shell": m.get("kills_by_shell", 0),
+                        "lives": m.get("lives", 0),
+                        "coins": m.get("coins", 0),
+                    }
+                    for m, c in zip(meta, labels)
+                ],
+                f,
+                indent=2,
+            )
+        print(f"[INFO] saved sample-level clusters to: {sample_clusters_path}")
+
+        # Aggregate the cluster distributions for each player (if needed)
+        player_clusters = defaultdict(list)
+        for m, c in zip(meta, labels):
+            player_clusters[m["player_id"]].append(int(c))
+        player_clusters_path = mode_dir / f"player_clusters_k{n_clusters}.json"
+        with player_clusters_path.open("w") as f:
+            json.dump(player_clusters, f, indent=2)
+        print(f"[INFO] saved player-level clusters to: {player_clusters_path}")
+
+        # Save the raw latent vectors, features used for clustering, and centers
+        np.save(mode_dir / "latents.npy", latents)
+        if args.mode == "combined":
+            np.save(mode_dir / "combined_features.npy", features)
+        else:
+            np.save(mode_dir / "latent_features.npy", features)
+        # Save cluster centers/means
+        if args.method == "kmeans":
+            np.save(mode_dir / f"kmeans_centers_k{n_clusters}.npy", clusterer.cluster_centers_)
+        else:  # gmm
+            np.save(mode_dir / f"gmm_means_k{n_clusters}.npy", clusterer.means_)
+
+        # ==== Start plotting ====
+        plot_2d_cluster_path = mode_dir / f"latent_pca_2d_clusters_k{n_clusters}.png"
+        plot_2d_player_path = mode_dir / f"latent_pca_2d_players_k{n_clusters}.png"
+        plot_3d_cluster_path = mode_dir / f"latent_pca_3d_clusters_k{n_clusters}.png"
+        plot_3d_player_path = mode_dir / f"latent_pca_3d_players_k{n_clusters}.png"
+        plot_2d_type_path = mode_dir / f"latent_pca_2d_player_types_k{n_clusters}.png"
+        plot_3d_type_path = mode_dir / f"latent_pca_3d_player_types_k{n_clusters}.png"
+
+        plot_latent_2d_clusters(features, labels, plot_2d_cluster_path)
+        plot_latent_2d_players(features, player_ids, plot_2d_player_path)
+        plot_latent_3d_clusters(features, labels, plot_3d_cluster_path)
+        plot_latent_3d_players(features, player_ids, plot_3d_player_path)
+        plot_latent_2d_player_types(features, meta, plot_2d_type_path)
+        plot_latent_3d_player_types(features, meta, plot_3d_type_path)
+        
+        print(f"[INFO] Done processing k={n_clusters}")
     
-    # Create mode-specific subdirectory for organized file storage
-    mode_suffix = "latent_only" if args.mode == "latent_only" else "combined"
-    mode_dir = output_dir / mode_suffix
-    mode_dir.mkdir(parents=True, exist_ok=True)
-
-    # Save the cluster assignments for each sample
-    sample_clusters_path = mode_dir / f"trajectory_clusters_k{args.n_clusters}.json"
-    with sample_clusters_path.open("w") as f:
-        json.dump(
-            [
-                {
-                    "player_id": m["player_id"],
-                    "path": str(m["path"]),
-                    "length": m["length"],
-                    "cluster": int(c),
-                    "status": m.get("status", "UNKNOWN"),
-                    "completing_ratio": m.get("completing_ratio", 0.0),
-                    "kills": m.get("kills", 0),
-                    "kills_by_fire": m.get("kills_by_fire", 0),
-                    "kills_by_stomp": m.get("kills_by_stomp", 0),
-                    "kills_by_shell": m.get("kills_by_shell", 0),
-                    "lives": m.get("lives", 0),
-                }
-                for m, c in zip(meta, labels)
-            ],
-            f,
-            indent=2,
-        )
-    print(f"[INFO] saved sample-level clusters to: {sample_clusters_path}")
-
-    # Aggregate the cluster distributions for each player (if needed)
-    player_clusters = defaultdict(list)
-    for m, c in zip(meta, labels):
-        player_clusters[m["player_id"]].append(int(c))
-    player_clusters_path = mode_dir / f"player_clusters_k{args.n_clusters}.json"
-    with player_clusters_path.open("w") as f:
-        json.dump(player_clusters, f, indent=2)
-    print(f"[INFO] saved player-level clusters to: {player_clusters_path}")
-
-    # Save the raw latent vectors, features used for clustering, and centers
-    np.save(mode_dir / "latents.npy", latents)
-    if args.mode == "combined":
-        np.save(mode_dir / "combined_features.npy", features)
-    else:
-        np.save(mode_dir / "latent_features.npy", features)
-    np.save(mode_dir / f"kmeans_centers_k{args.n_clusters}.npy", kmeans.cluster_centers_)
-
-    # ==== Start plotting ====
-    plot_2d_cluster_path = mode_dir / f"latent_pca_2d_clusters_k{args.n_clusters}.png"
-    plot_2d_player_path = mode_dir / f"latent_pca_2d_players_k{args.n_clusters}.png"
-    plot_3d_cluster_path = mode_dir / f"latent_pca_3d_clusters_k{args.n_clusters}.png"
-    plot_3d_player_path = mode_dir / f"latent_pca_3d_players_k{args.n_clusters}.png"
-    plot_2d_type_path = mode_dir / f"latent_pca_2d_player_types_k{args.n_clusters}.png"
-    plot_3d_type_path = mode_dir / f"latent_pca_3d_player_types_k{args.n_clusters}.png"
-
-    plot_latent_2d_clusters(features, labels, plot_2d_cluster_path)
-    plot_latent_2d_players(features, player_ids, plot_2d_player_path)
-    plot_latent_3d_clusters(features, labels, plot_3d_cluster_path)
-    plot_latent_3d_players(features, player_ids, plot_3d_player_path)
-    plot_latent_2d_player_types(features, meta, plot_2d_type_path)
-    plot_latent_3d_player_types(features, meta, plot_3d_type_path)
-
-    print("[INFO] done.")
+    print(f"\n{'='*80}")
+    print(f"[INFO] Done processing all cluster numbers.")
+    print(f"{'='*80}")
 
 if __name__ == "__main__":
     main()

@@ -9,8 +9,8 @@ def compute_euclidean_distance_metrics(
     recon: torch.Tensor,
     target: torch.Tensor,
     lengths: torch.Tensor,
-    offsets: torch.Tensor,
-    scales: torch.Tensor,
+    means: torch.Tensor,
+    stds: torch.Tensor,
     device: torch.device,
 ) -> Dict[str, float]:
     """Compute Euclidean distance metrics in original (denormalized) space.
@@ -24,8 +24,8 @@ def compute_euclidean_distance_metrics(
         recon: Reconstructed trajectories [B, T_max, D] in normalized space [0, 1]
         target: Target trajectories [B, T_max, D] in normalized space [0, 1]
         lengths: Actual lengths of each trajectory [B]
-        offsets: Per-trajectory normalization offsets (min) [B, D]
-        scales: Per-trajectory normalization scales (max - min) [B, D]
+        means: Per-trajectory normalization means [B, D]
+        stds: Per-trajectory normalization stds [B, D]
         device: Device to run computation on
         
     Returns:
@@ -33,13 +33,13 @@ def compute_euclidean_distance_metrics(
     """
     B, T_max, D = recon.shape
     lengths = lengths.to(device)
-    offsets = offsets.to(device)
-    scales = scales.to(device)
+    means = means.to(device)
+    stds = stds.to(device)
     
     # Denormalize both reconstruction and target back to original space
     # This reveals the actual pixel distances that were hidden by normalization
-    recon_orig = recon * scales.unsqueeze(1) + offsets.unsqueeze(1)  # [B, T_max, D]
-    target_orig = target * scales.unsqueeze(1) + offsets.unsqueeze(1)  # [B, T_max, D]
+    recon_orig = recon * stds.unsqueeze(1) + means.unsqueeze(1)  # [B, T_max, D]
+    target_orig = target * stds.unsqueeze(1) + means.unsqueeze(1)  # [B, T_max, D]
     
     # Create mask for valid timesteps
     mask = torch.arange(T_max, device=device).unsqueeze(0).expand(B, T_max)
@@ -95,8 +95,8 @@ def evaluate(
         for batch in dataloader:
             trajectories = batch["trajectories"].to(device)
             lengths = batch["lengths"].to(device)
-            offsets = batch["normalization_offsets"].to(device)
-            scales = batch["normalization_scales"].to(device)
+            means = batch["normalization_means"].to(device)
+            stds = batch["normalization_stds"].to(device)
             
             recon, _ = model(trajectories, lengths)
             
@@ -107,7 +107,7 @@ def evaluate(
             # Original space metrics (for reporting)
             if compute_original_metrics:
                 metrics = compute_euclidean_distance_metrics(
-                    recon, trajectories, lengths, offsets, scales, device
+                    recon, trajectories, lengths, means, stds, device
                 )
                 all_euclidean_dists.append(metrics["mean_euclidean_distance"])
             
@@ -138,6 +138,8 @@ def compute_training_metrics(
     Returns:
         Mean Euclidean distance in original pixel space
     """
+    # Save current training state
+    was_training = model.training
     model.eval()
     euclidean_dists = []
     
@@ -145,14 +147,18 @@ def compute_training_metrics(
         for batch in dataloader:
             trajectories = batch["trajectories"].to(device)
             lengths = batch["lengths"].to(device)
-            offsets = batch["normalization_offsets"].to(device)
-            scales = batch["normalization_scales"].to(device)
+            means = batch["normalization_means"].to(device)
+            stds = batch["normalization_stds"].to(device)
             
             recon, _ = model(trajectories, lengths)
             metrics = compute_euclidean_distance_metrics(
-                recon, trajectories, lengths, offsets, scales, device
+                recon, trajectories, lengths, means, stds, device
             )
             euclidean_dists.append(metrics["mean_euclidean_distance"])
+    
+    # Restore training state
+    if was_training:
+        model.train()
     
     return sum(euclidean_dists) / len(euclidean_dists) if euclidean_dists else 0.0
 

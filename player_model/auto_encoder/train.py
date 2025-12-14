@@ -96,7 +96,6 @@ def main():
 
             loss = masked_mse_loss(recon, trajectories, lengths)
             loss.backward()
-            scheduler.step()
             
             if train_config.gradient_clip > 0:
                 torch.nn.utils.clip_grad_norm_(
@@ -105,6 +104,7 @@ def main():
                 )
             
             optimizer.step()
+            scheduler.step()
 
             global_step += 1
             loss_value = loss.item()
