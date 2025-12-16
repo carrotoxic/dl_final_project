@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..config import ModelConfig
+from ..config import TransformerModelConfig
 
 
 class TransformerAutoencoder(nn.Module):
@@ -19,7 +19,7 @@ class TransformerAutoencoder(nn.Module):
     - MLP decoder: Multi-layer perceptron that reconstructs trajectory [B, S, F] from latent vectors
     - Loss: L2 loss (MSE) between actual and reconstructed trajectories
     """
-    def __init__(self, cfg: ModelConfig):
+    def __init__(self, cfg: TransformerModelConfig, max_seq_len: int):
         super().__init__()
         self.cfg = cfg
         
@@ -27,7 +27,7 @@ class TransformerAutoencoder(nn.Module):
         self.input_embedding = nn.Linear(cfg.input_dim, cfg.latent_dim)
         
         # Learnable positional encoding
-        self.max_seq_len = 2000
+        self.max_seq_len = max_seq_len
         self.pos_encoding = nn.Parameter(torch.zeros(1, self.max_seq_len, cfg.latent_dim))
         
         # Transformer encoder with full self-attention mechanism (as in original Transformer)

@@ -1,68 +1,85 @@
 from dataclasses import dataclass
 from pathlib import Path
+from abc import ABC
+from typing import Literal, Union
 
 
 @dataclass
 class DataConfig:
     data_root: Path = Path("data/player_trajectory_no_timeout_human")
-    trace_key: str = "trace"
-    min_length: int = 10
-    max_files: int | None = None
+    normalize: bool = True
 
 
 @dataclass
-class ModelConfig:
+class BaseModelConfig(ABC):
+    """Abstract base class for model configurations."""
+    model_name: str = "lstm"
+
+
+@dataclass
+class LSTMModelConfig(BaseModelConfig):
+    """Configuration for LSTM autoencoder."""
     model_name: str = "lstm"
     input_dim: int = 2
-    hidden_dim: int =  32
+    hidden_dim: int = 32
     latent_dim: int = 8
     num_layers: int = 1
+    dropout: float = 0.1
 
 
 @dataclass
-class FusionModelConfig:
-    """Configuration for fusion autoencoder."""
-    trajectory_latent_dim: int = 8  # From pre-trained LSTM autoencoder
-    raw_feature_dim: int = 10  # status one-hot (3) + numeric features (7)
-    joint_latent_dim: int = 16  # Joint latent space dimension
-    hidden_dim: int = 32  # Hidden dimension for encoders/decoders
-    fusion_hidden_dim: int = 32  # Hidden dimension for fusion layer
+class TransformerModelConfig(BaseModelConfig):
+    """Configuration for transformer autoencoder."""
+    model_name: str = "transformer"
+    input_dim: int = 2
+    latent_dim: int = 8
+    num_heads: int = 4
+    ff_dim: int = 32
     dropout: float = 0.1
-    use_attention: bool = False  # Use attention-based fusion or concatenation
+
+
+@dataclass
+class FusionModelConfig(BaseModelConfig):
+    """Configuration for fusion autoencoder."""
+    model_name: str = "fusion"
+    trajectory_input_dim: int = 2
+    raw_feature_dim: int = 10
+    joint_latent_dim: int = 8
+    trajectory_hidden_dim: int = 32
+    feature_hidden_dim: int = 32
+    fusion_hidden_dim: int = 32
+    num_lstm_layers: int = 1
+    dropout: float = 0.1
+
+
+ModelConfig = Union[LSTMModelConfig, TransformerModelConfig, FusionModelConfig]
+
+
+def create_model_config(
+    model_name: Literal["lstm", "transformer", "fusion"] = "lstm",
+    **kwargs
+) -> ModelConfig:
+    """Factory function to create model config based on model_name."""
+    if model_name == "lstm":
+        return LSTMModelConfig(**kwargs)
+    elif model_name == "transformer":
+        return TransformerModelConfig(**kwargs)
+    elif model_name == "fusion":
+        return FusionModelConfig(**kwargs)
+    else:
+        raise ValueError(f"Unknown model_name: {model_name}. Must be one of: lstm, transformer, fusion")
 
 
 @dataclass
 class TrainConfig:
+    model_name: str = "lstm"
     batch_size: int = 1024
     num_epochs: int = 10000
     lr: float = 1e-3
     weight_decay: float = 0
     device: str = "cuda"
     log_interval: int = 50
-    model_save_path: Path = Path("checkpoints/player_model/auto_encoder/lstm_ae_h32_z8_human.pt")
+    model_save_path: Path = Path(f"checkpoints/{model_name}/{model_name}.pt")
     gradient_clip: float = 1.0
-    save_interval: int = 100
-
-
-@dataclass
-class FusionTrainConfig:
-    """Training configuration for fusion autoencoder."""
-    batch_size: int = 256
-    num_epochs: int = 500
-    lr: float = 1e-3
-    weight_decay: float = 1e-5
-    device: str = "cuda"
-    log_interval: int = 50
-    model_save_path: Path = Path("checkpoints/player_model/auto_encoder/fusion_ae_joint16.pt")
-    gradient_clip: float = 1.0
-    save_interval: int = 50
-    # Loss weights
     trajectory_recon_weight: float = 1.0
-    raw_recon_weight: float = 1.0
-
-
-data_config = DataConfig()
-model_config = ModelConfig()
-train_config = TrainConfig()
-fusion_model_config = FusionModelConfig()
-fusion_train_config = FusionTrainConfig()
+    latent_recon_weight: float = 1.0

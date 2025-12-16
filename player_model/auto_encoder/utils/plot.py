@@ -9,15 +9,7 @@ def plot_train_val_loss(
     save_path: Optional[Path] = None,
     show_plot: bool = True,
 ) -> None:
-    """
-    Plot training and validation loss curves.
-    
-    Args:
-        train_losses: List of training losses per epoch
-        val_losses: List of validation losses per epoch
-        save_path: Optional path to save the plot
-        show_plot: Whether to display the plot
-    """
+    """Plot training and validation loss curves"""
     epochs = range(1, len(train_losses) + 1)
     
     plt.figure(figsize=(10, 6))
