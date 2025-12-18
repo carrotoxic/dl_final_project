@@ -1,4 +1,4 @@
-Learning Latent Play-Style Representations
+# Learning Latent Play-Style Representations
 
 This repository implements deep autoencoder architectures (LSTM and Transformer) to learn compact latent representations of gameplay trajectories for unsupervised play-style clustering in Super Mario Bros.
 
