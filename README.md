@@ -30,6 +30,11 @@ python -m player_model.auto_encoder.train --model transformer
 
 Models are saved to `checkpoints/{model}/{model}.pt` with loss curves saved as PNG.
 
+### Model Weights
+
+Please download the pre-trained model weights from:
+- 🤗 [Hugging Face](https://huggingface.co/carrotoxic/dl_midterm)
+
 ## Clustering
 
 Run clustering analysis on learned latent representations:
