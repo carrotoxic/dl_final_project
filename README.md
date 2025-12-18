@@ -33,7 +33,7 @@ Models are saved to `checkpoints/{model}/{model}.pt` with loss curves saved as P
 ### Model Weights
 
 Please download the pre-trained model weights from:
-- 🤗 [Hugging Face](https://huggingface.co/carrotoxic/dl_midterm)
+- 🤗 [Hugging Face](https://huggingface.co/carrotoxic/dl_final_project)
 
 ## Clustering
 
