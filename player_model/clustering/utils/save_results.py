@@ -84,11 +84,9 @@ def _assign_players_to_clusters(meta: List[Dict], labels: np.ndarray) -> List[Di
 def save_clustering_results(
     labels: np.ndarray,
     meta: List[Dict],
-    non_trajectory_features: np.ndarray,
     output_dir: Path,
     method: str,
     model: str,
-    mode: str,
     n_clusters: int,
     evaluation: Dict[str, float] | None = None,
 ):
@@ -123,7 +121,7 @@ def save_clustering_results(
     # non_trajectory_features is already baked into meta fields above.
     results = _assign_players_to_clusters(meta, labels)
 
-    csv_path = output_dir / f"player_clusters_{mode}_k{n_clusters}.csv"
+    csv_path = output_dir / f"player_clusters_k{n_clusters}.csv"
     fieldnames = [
         "player_id",
         "cluster",

@@ -6,7 +6,7 @@ from typing import Literal, Union
 
 @dataclass
 class DataConfig:
-    data_root: Path = Path("data/player_trajectory_no_timeout_human")
+    data_root: Path = Path("data/player_trajectory_cumulative_no_timeout_human")
     normalize: bool = True
 
 
@@ -20,7 +20,7 @@ class BaseModelConfig(ABC):
 class LSTMModelConfig(BaseModelConfig):
     """Configuration for LSTM autoencoder."""
     model_name: str = "lstm"
-    input_dim: int = 2
+    input_dim: int = 12
     hidden_dim: int = 32
     latent_dim: int = 8
     num_layers: int = 1
@@ -31,32 +31,19 @@ class LSTMModelConfig(BaseModelConfig):
 class TransformerModelConfig(BaseModelConfig):
     """Configuration for transformer autoencoder."""
     model_name: str = "transformer"
-    input_dim: int = 2
+    input_dim: int = 12
+    hidden_dim: int = 32
     latent_dim: int = 8
     num_heads: int = 4
     ff_dim: int = 32
     dropout: float = 0.1
 
 
-@dataclass
-class FusionModelConfig(BaseModelConfig):
-    """Configuration for fusion autoencoder."""
-    model_name: str = "fusion"
-    trajectory_input_dim: int = 2
-    raw_feature_dim: int = 10
-    joint_latent_dim: int = 8
-    trajectory_hidden_dim: int = 32
-    feature_hidden_dim: int = 32
-    fusion_hidden_dim: int = 32
-    num_lstm_layers: int = 1
-    dropout: float = 0.1
-
-
-ModelConfig = Union[LSTMModelConfig, TransformerModelConfig, FusionModelConfig]
+ModelConfig = Union[LSTMModelConfig, TransformerModelConfig]
 
 
 def create_model_config(
-    model_name: Literal["lstm", "transformer", "fusion"] = "lstm",
+    model_name: Literal["lstm", "transformer"] = "lstm",
     **kwargs
 ) -> ModelConfig:
     """Factory function to create model config based on model_name."""
@@ -64,17 +51,15 @@ def create_model_config(
         return LSTMModelConfig(**kwargs)
     elif model_name == "transformer":
         return TransformerModelConfig(**kwargs)
-    elif model_name == "fusion":
-        return FusionModelConfig(**kwargs)
     else:
-        raise ValueError(f"Unknown model_name: {model_name}. Must be one of: lstm, transformer, fusion")
+        raise ValueError(f"Unknown model_name: {model_name}. Must be one of: lstm, transformer")
 
 
 @dataclass
 class TrainConfig:
-    model_name: str = "lstm"
-    batch_size: int = 1024
-    num_epochs: int = 10000
+    model_name: str = "transformer"
+    batch_size: int = 128
+    num_epochs: int = 1000
     lr: float = 1e-3
     weight_decay: float = 0
     device: str = "cuda"

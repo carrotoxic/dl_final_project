@@ -25,17 +25,3 @@ def masked_mse_loss(
     loss = (1/D) * per_sample_mse.mean()
     return loss
 
-
-def fusion_reconstruction_loss(
-    recon_trajectory: torch.Tensor,
-    target_trajectory: torch.Tensor,
-    recon_raw: torch.Tensor,
-    target_raw: torch.Tensor,
-    trajectory_weight: float = 1.0,
-    raw_weight: float = 1.0,
-) -> torch.Tensor:
-    """Combined reconstruction loss for trajectory and raw features"""
-    traj_loss = nn.functional.mse_loss(recon_trajectory, target_trajectory)
-    raw_loss = nn.functional.mse_loss(recon_raw, target_raw)
-    total_loss = trajectory_weight * traj_loss + raw_weight * raw_loss
-    return total_loss, traj_loss, raw_loss

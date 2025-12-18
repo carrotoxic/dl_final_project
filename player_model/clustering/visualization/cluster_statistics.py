@@ -31,13 +31,23 @@ def compute_cluster_statistics(meta: List[Dict], labels: np.ndarray) -> Dict[int
         lose_rate = sum(1 for r in rows if r.get("status") == "LOSE") / n if n else 0.0
 
         comp_vals = [float(r.get("completing_ratio", 0.0)) for r in rows]
-        kills_vals = [float(r.get("kills", 0.0)) for r in rows]
-        coins_vals = [float(r.get("coins", 0.0)) for r in rows]
+        coins_ratio_vals = [float(r.get("coins_ratio", 0.0)) for r in rows]
+        kills_ratio_vals = [float(r.get("kills_ratio", 0.0)) for r in rows]
+        jumps_vals = [float(r.get("jumps", 0.0)) for r in rows]
+        bumps_vals = [float(r.get("bumps", 0.0)) for r in rows]
+        kicks_vals = [float(r.get("kicks", 0.0)) for r in rows]
+        hurts_vals = [float(r.get("hurts", 0.0)) for r in rows]
+        lives_vals = [float(r.get("lives", 0.0)) for r in rows]
         len_vals = [float(r.get("length", 0.0)) for r in rows]
 
         comp_mean, comp_std = _mean_std(comp_vals)
-        kills_mean, kills_std = _mean_std(kills_vals)
-        coins_mean, coins_std = _mean_std(coins_vals)
+        coins_ratio_mean, coins_ratio_std = _mean_std(coins_ratio_vals)
+        kills_ratio_mean, kills_ratio_std = _mean_std(kills_ratio_vals)
+        jumps_mean, jumps_std = _mean_std(jumps_vals)
+        bumps_mean, bumps_std = _mean_std(bumps_vals)
+        kicks_mean, kicks_std = _mean_std(kicks_vals)
+        hurts_mean, hurts_std = _mean_std(hurts_vals)
+        lives_mean, lives_std = _mean_std(lives_vals)
         len_mean, len_std = _mean_std(len_vals)
 
         stats[int(cid)] = {
@@ -46,10 +56,20 @@ def compute_cluster_statistics(meta: List[Dict], labels: np.ndarray) -> Dict[int
             "lose_rate": float(lose_rate),
             "completion_mean": comp_mean,
             "completion_std": comp_std,
-            "kills_mean": kills_mean,
-            "kills_std": kills_std,
-            "coins_mean": coins_mean,
-            "coins_std": coins_std,
+            "coins_ratio_mean": coins_ratio_mean,
+            "coins_ratio_std": coins_ratio_std,
+            "kills_ratio_mean": kills_ratio_mean,
+            "kills_ratio_std": kills_ratio_std,
+            "jumps_mean": jumps_mean,
+            "jumps_std": jumps_std,
+            "bumps_mean": bumps_mean,
+            "bumps_std": bumps_std,
+            "kicks_mean": kicks_mean,
+            "kicks_std": kicks_std,
+            "hurts_mean": hurts_mean,
+            "hurts_std": hurts_std,
+            "lives_mean": lives_mean,
+            "lives_std": lives_std,
             "length_mean": len_mean,
             "length_std": len_std,
         }
@@ -79,7 +99,7 @@ def plot_cluster_statistics(
     x = np.arange(len(cluster_ids))
     xticklabels = [f"C{cid}" if cid >= 0 else "noise" for cid in cluster_ids]
 
-    fig, axes = plt.subplots(2, 3, figsize=(14, 7))
+    fig, axes = plt.subplots(2, 5, figsize=(20, 7))
     axes = axes.flatten()
     for ax in axes:
         ax.set_axisbelow(True)  # grid behind bars
@@ -144,42 +164,83 @@ def plot_cluster_statistics(
         fmt="{:.2f}",
     )
 
-    # Coins
+    # Coins collecting ratio
     bar(
         axes[2],
-        [stats[c]["coins_mean"] for c in cluster_ids],
-        yerr=[stats[c]["coins_std"] for c in cluster_ids],
+        [stats[c]["coins_ratio_mean"] for c in cluster_ids],
+        yerr=[stats[c]["coins_ratio_std"] for c in cluster_ids],
         ylabel="mean ± std",
-        title_txt="Coins",
-        fmt="{:.1f}",
+        title_txt="Coins collecting ratio",
+        fmt="{:.2f}",
     )
 
-    # Kills
+    # Kills ratio
     bar(
         axes[3],
-        [stats[c]["kills_mean"] for c in cluster_ids],
-        yerr=[stats[c]["kills_std"] for c in cluster_ids],
+        [stats[c]["kills_ratio_mean"] for c in cluster_ids],
+        yerr=[stats[c]["kills_ratio_std"] for c in cluster_ids],
         ylabel="mean ± std",
-        title_txt="Kills",
+        title_txt="Kills ratio",
+        fmt="{:.2f}",
+    )
+
+    # Jumps
+    bar(
+        axes[4],
+        [stats[c]["jumps_mean"] for c in cluster_ids],
+        yerr=[stats[c]["jumps_std"] for c in cluster_ids],
+        ylabel="mean ± std",
+        title_txt="Jumps",
+        fmt="{:.0f}",
+    )
+
+    # Bumps
+    bar(
+        axes[5],
+        [stats[c]["bumps_mean"] for c in cluster_ids],
+        yerr=[stats[c]["bumps_std"] for c in cluster_ids],
+        ylabel="mean ± std",
+        title_txt="Bumps",
+        fmt="{:.0f}",
+    )
+
+    # Kicks
+    bar(
+        axes[6],
+        [stats[c]["kicks_mean"] for c in cluster_ids],
+        yerr=[stats[c]["kicks_std"] for c in cluster_ids],
+        ylabel="mean ± std",
+        title_txt="Kicks",
+        fmt="{:.0f}",
+    )
+
+    # Hurts
+    bar(
+        axes[7],
+        [stats[c]["hurts_mean"] for c in cluster_ids],
+        yerr=[stats[c]["hurts_std"] for c in cluster_ids],
+        ylabel="mean ± std",
+        title_txt="Hurts",
+        fmt="{:.0f}",
+    )
+
+    # Lives
+    bar(
+        axes[8],
+        [stats[c]["lives_mean"] for c in cluster_ids],
+        yerr=[stats[c]["lives_std"] for c in cluster_ids],
+        ylabel="mean ± std",
+        title_txt="Lives",
         fmt="{:.1f}",
     )
 
     # Trajectory length
     bar(
-        axes[4],
+        axes[9],
         [stats[c]["length_mean"] for c in cluster_ids],
         yerr=[stats[c]["length_std"] for c in cluster_ids],
         ylabel="mean ± std",
         title_txt="Trajectory length",
-        fmt="{:.0f}",
-    )
-
-    # Number of trajectories
-    bar(
-        axes[5],
-        [stats[c]["n_trajectories"] for c in cluster_ids],
-        ylabel="count",
-        title_txt="Trajectories per cluster",
         fmt="{:.0f}",
     )
 

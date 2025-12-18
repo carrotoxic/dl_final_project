@@ -10,6 +10,24 @@ import numpy as np
 from ..config import DataConfig
 
 
+def extract_timestep_features(timestep: Dict[str, Any]) -> np.ndarray:
+    features = np.array([
+        timestep.get("jump", 0),
+        timestep.get("land", 0),
+        timestep.get("bump", 0),
+        timestep.get("kick", 0),
+        timestep.get("kills_total", 0),
+        timestep.get("kills_by_fire", 0),
+        timestep.get("kills_by_stomp", 0),
+        timestep.get("kills_by_shell", 0),
+        timestep.get("kills_by_fall", 0),
+        timestep.get("hurts", 0),
+        timestep.get("collected", 0),
+        timestep.get("death", 0),
+    ], dtype=np.float32)
+    return features
+
+
 class TrajectoryDataset(Dataset):
     def __init__(self, cfg: DataConfig):
         self.cfg = cfg
@@ -20,28 +38,55 @@ class TrajectoryDataset(Dataset):
             with f.open("r") as fp:
                 data = json.load(fp)
             
-            # Get player id from filename
             filename = f.stem
             player_id = filename.split("_")[0]
             
+            trace = data.get("trace", [])
+            if not trace:
+                continue
             
-            trace = data.get("trace", None)
-
+            trace_features = [extract_timestep_features(ts) for ts in trace]
+            last_timestep = trace[-1]
+            
             completing_ratio = data.get("completing-ratio", 0.0)
-            kills_ratio = data.get("#kills", 0) / data.get("all_enemies", 0)
-            kills_by_fire_ratio = data.get("#kills-by-fire", 0) / data.get("all_enemies", 0)
-            kills_by_stomp_ratio = data.get("#kills-by-stomp", 0) / data.get("all_enemies", 0)
-            kills_by_shell_ratio = data.get("#kills-by-shell", 0) / data.get("all_enemies", 0)
-            collected_coins_ratio = data.get("#coins", data.get("#coins", 0)) / data.get("all_coins", 0)
+            all_enemies = data.get("all_enemies", 1)
+            all_coins = data.get("all_coins", 1)
+            
+            kills_ratio = data.get("#kills", 0) / all_enemies if all_enemies > 0 else 0.0
+            kills_by_fire_ratio = data.get("#kills-by-fire", 0) / all_enemies if all_enemies > 0 else 0.0
+            kills_by_stomp_ratio = data.get("#kills-by-stomp", 0) / all_enemies if all_enemies > 0 else 0.0
+            kills_by_shell_ratio = data.get("#kills-by-shell", 0) / all_enemies if all_enemies > 0 else 0.0
+            collected_coins_ratio = data.get("#coins", 0) / all_coins if all_coins > 0 else 0.0
             lives = data.get("lives", 0)
-
-            overall_features = np.array([completing_ratio, kills_ratio, kills_by_fire_ratio, kills_by_stomp_ratio, kills_by_shell_ratio, collected_coins_ratio, lives])
+            
+            total_jump = last_timestep.get("jump", 0)
+            total_land = last_timestep.get("land", 0)
+            total_kills = last_timestep.get("kills_total", 0)
+            total_collected = last_timestep.get("collected", 0)
+            total_hurts = last_timestep.get("hurts", 0)
+            total_death = last_timestep.get("death", 0)
+            
+            overall_features = np.array([
+                completing_ratio,
+                kills_ratio,
+                kills_by_fire_ratio,
+                kills_by_stomp_ratio,
+                kills_by_shell_ratio,
+                collected_coins_ratio,
+                lives,
+                total_jump,
+                total_land,
+                total_kills,
+                total_collected,
+                total_hurts,
+                total_death
+            ], dtype=np.float32)
 
             self.samples.append(
                 {
                     "player_id": player_id,
                     "path": f,
-                    "trace": trace,
+                    "trace_features": trace_features,
                     "overall_features": overall_features,
                 }
             )
@@ -54,8 +99,8 @@ class TrajectoryDataset(Dataset):
         """Compute the maximum sequence length in the dataset."""
         max_len = 0
         for sample in self.samples:
-            trace = sample.get("trace")
-            max_len = max(max_len, len(trace))
+            trace_features = sample.get("trace_features")
+            max_len = max(max_len, len(trace_features))
         return max_len
 
     def __len__(self) -> int:
@@ -63,14 +108,17 @@ class TrajectoryDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         sample = self.samples[idx]
-        trace = sample["trace"]
-        traj_tensor = torch.tensor(trace, dtype=torch.float32)
+        trace_features = sample["trace_features"]
+        trace_array = np.array(trace_features, dtype=np.float32)
+        traj_tensor = torch.from_numpy(trace_array)
         
-        # Normalize the trajectory to [0, 1] per dimension
+        mean = torch.zeros(traj_tensor.shape[1])
+        std = torch.ones(traj_tensor.shape[1])
+        
         if self.cfg.normalize:
             eps = 1e-8
-            mean = traj_tensor.mean(axis=0)  # [mean_x, mean_y]
-            std = traj_tensor.std(axis=0)    # [std_x, std_y]
+            mean = traj_tensor.mean(axis=0)
+            std = traj_tensor.std(axis=0)
             traj_tensor = (traj_tensor - mean) / (std + eps)
 
         return {
@@ -99,7 +147,7 @@ def trajectory_collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     means = torch.stack([b["normalization_mean"] for b in batch])  # [B, D]
     stds = torch.stack([b["normalization_std"] for b in batch])    # [B, D]
 
-    overall_features = torch.tensor([b["overall_features"] for b in batch], dtype=torch.float32)
+    overall_features = torch.from_numpy(np.stack([b["overall_features"] for b in batch]).astype(np.float32))
 
     return {
         "player_ids": player_ids,

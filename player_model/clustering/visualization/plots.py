@@ -18,7 +18,7 @@ def plot_clusters_2d(features: np.ndarray, labels: np.ndarray, save_path: Path, 
     plt.figure(figsize=(10, 8))
     scatter = plt.scatter(
         projection_2d[:, 0], projection_2d[:, 1],
-        c=colors, s=15, alpha=0.6, edgecolors='white', linewidths=0.3
+        c=colors, s=15, alpha=0.8, edgecolors='white', linewidths=0.3
     )
     
     for k in unique_labels:
@@ -55,7 +55,7 @@ def plot_clusters_3d(features: np.ndarray, labels: np.ndarray, save_path: Path, 
     
     ax.scatter(
         projection_3d[:, 0], projection_3d[:, 1], projection_3d[:, 2],
-        c=colors, s=10, alpha=0.6, edgecolors='white', linewidths=0.2
+        c=colors, s=10, alpha=0.8, edgecolors='white', linewidths=0.2
     )
     
     ax.set_xlabel("PC1", fontsize=11)
@@ -82,7 +82,7 @@ def plot_players_2d(features: np.ndarray, player_ids: list, save_path: Path, n_t
     plt.figure(figsize=(10, 8))
     plt.scatter(
         filtered_projection[:, 0], filtered_projection[:, 1],
-        c=colors, s=15, alpha=0.6, edgecolors='white', linewidths=0.3
+        c=colors, s=15, alpha=0.8, edgecolors='white', linewidths=0.3
     )
     
     handles = [Patch(facecolor=color_map[player_to_idx[pid]], label=pid) for pid in top_players]
@@ -113,7 +113,7 @@ def plot_players_3d(features: np.ndarray, player_ids: list, save_path: Path, n_t
     
     ax.scatter(
         filtered_projection[:, 0], filtered_projection[:, 1], projection_3d[top_mask, 2],
-        c=colors, s=10, alpha=0.6, edgecolors='white', linewidths=0.2
+        c=colors, s=10, alpha=0.8, edgecolors='white', linewidths=0.2
     )
     
     ax.set_xlabel("PC1", fontsize=11)
@@ -150,13 +150,13 @@ def plot_player_types_2d(features: np.ndarray, meta: list, save_path: Path):
     filtered_projection = projection_2d[valid_mask]
     filtered_types = np.array([type_indices[i] for i in range(len(type_indices)) if valid_mask[i]])
     
-    type_colors = ['#FFB6C1', '#87CEEB', '#98D8C8']
+    type_colors = ['#FF69B4', '#00BFFF', '#00CED1']
     colors = [type_colors[t] for t in filtered_types]
     
     plt.figure(figsize=(10, 8))
     plt.scatter(
         filtered_projection[:, 0], filtered_projection[:, 1],
-        c=colors, s=15, alpha=0.6, edgecolors='white', linewidths=0.3
+        c=colors, s=15, alpha=0.8, edgecolors='white', linewidths=0.3
     )
     
     legend_elements = [
@@ -187,7 +187,7 @@ def plot_player_types_3d(features: np.ndarray, meta: list, save_path: Path):
     filtered_projection = projection_3d[valid_mask]
     filtered_types = np.array([type_indices[i] for i in range(len(type_indices)) if valid_mask[i]])
     
-    type_colors = ['#FFB6C1', '#87CEEB', '#98D8C8']
+    type_colors = ['#FF69B4', '#00BFFF', '#00CED1']
     colors = [type_colors[t] for t in filtered_types]
     
     fig = plt.figure(figsize=(12, 9))
@@ -195,7 +195,7 @@ def plot_player_types_3d(features: np.ndarray, meta: list, save_path: Path):
     
     ax.scatter(
         filtered_projection[:, 0], filtered_projection[:, 1], filtered_projection[:, 2],
-        c=colors, s=10, alpha=0.6, edgecolors='white', linewidths=0.2
+        c=colors, s=10, alpha=0.8, edgecolors='white', linewidths=0.2
     )
     
     legend_elements = [

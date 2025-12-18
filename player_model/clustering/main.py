@@ -20,19 +20,17 @@ from .utils.save_results import save_clustering_results, save_evaluation_results
 def run_clustering(
     features: np.ndarray,
     meta: list,
-    non_trajectory_features: np.ndarray,
     method: str,
     n_clusters: int,
     output_dir: Path,
     model: str,
-    mode: str,
 ):
     """Run clustering for a single method and cluster number"""
     print(f"\n{'='*80}")
     print(f"Method: {method.upper()}, K={n_clusters}")
     print(f"{'='*80}")
     
-    result_dir = output_dir / method / model / mode / f"k{n_clusters}"
+    result_dir = output_dir / model / method / f"k{n_clusters}"
     result_dir.mkdir(parents=True, exist_ok=True)
     
     clustering_method = create_clustering_method(method, n_clusters)
@@ -51,8 +49,8 @@ def run_clustering(
     print(f"[INFO] Silhouette Score: {silhouette:.4f}")
     
     save_clustering_results(
-        labels, meta, non_trajectory_features,
-        result_dir, method, model, mode, n_clusters, evaluation
+        labels, meta,
+        result_dir, method, model, n_clusters, evaluation
     )
     
     player_ids = [m["player_id"] for m in meta]
@@ -93,16 +91,13 @@ def run_clustering(
 
 def main():
     parser = argparse.ArgumentParser(description="Cluster players with multiple methods")
-    parser.add_argument("--methods", nargs="+", choices=CLUSTERING_METHODS, default=["kmeans"],
-                        help="Clustering methods to use")
+    parser.add_argument("--methods", nargs="+", choices=CLUSTERING_METHODS, default=CLUSTERING_METHODS,
+                        help="Clustering methods to use (default: all methods)")
     parser.add_argument("--n_clusters", nargs="+", type=int, default=None,
                         help="Cluster numbers (default: 2-10)")
     parser.add_argument("--output_dir", type=str, default="clustering_results",
                         help="Output directory")
-    parser.add_argument("--mode", type=str, choices=["latent_only", "combined"], default="combined")
-    # no_timeout filtering removed
-    parser.add_argument("--model", type=str, choices=["lstm", "fusion", "transformer"], default="lstm")
-    parser.add_argument("--fusion_model_path", type=str, default=None)
+    parser.add_argument("--model", type=str, choices=["lstm", "transformer"], default="lstm")
     args = parser.parse_args()
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -114,13 +109,10 @@ def main():
     else:
         cluster_numbers = args.n_clusters
     
-    print(f"[INFO] Extracting features (model={args.model}, mode={args.mode})...")
-    features, latents, meta, non_trajectory_features = extract_features(
-        device, args.model, args.mode,
-        Path(args.fusion_model_path) if args.fusion_model_path else None
+    print(f"[INFO] Extracting features (model={args.model})...")
+    features, meta = extract_features(
+        device, args.model
     )
-    
-    mode_name = "fusion" if args.model == "fusion" else args.mode
     
     all_evaluations = {}
     
@@ -134,8 +126,8 @@ def main():
             
             try:
                 evaluation = run_clustering(
-                    features, meta, non_trajectory_features,
-                    method, n_clusters, output_dir, args.model, mode_name
+                    features, meta,
+                    method, n_clusters, output_dir, args.model
                 )
                 method_evaluations[str(n_clusters) if n_clusters else "auto"] = evaluation
             except Exception as e:
@@ -144,7 +136,9 @@ def main():
         
         all_evaluations[method] = method_evaluations
     
-    eval_summary_path = output_dir / "evaluation_summary.json"
+    model_output_dir = output_dir / args.model
+    model_output_dir.mkdir(parents=True, exist_ok=True)
+    eval_summary_path = model_output_dir / "evaluation_summary.json"
     save_evaluation_results(all_evaluations, eval_summary_path)
     
     print(f"\n{'='*80}")

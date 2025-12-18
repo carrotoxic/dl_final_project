@@ -3,21 +3,21 @@ import matplotlib.colors as mcolors
 
 
 SOFT_COLORS = [
-    '#FFB6C1',  # Light Pink
-    '#87CEEB',  # Sky Blue
-    '#98D8C8',  # Mint Green
-    '#F7DC6F',  # Soft Yellow
-    '#BB8FCE',  # Lavender
-    '#85C1E2',  # Light Blue
-    '#F8C471',  # Peach
-    '#82E0AA',  # Light Green
-    '#F1948A',  # Coral
-    '#AED6F1',  # Powder Blue
-    '#D7BDE2',  # Light Purple
-    '#F9E79F',  # Pale Yellow
-    '#A9DFBF',  # Seafoam
-    '#F5B7B1',  # Rose
-    '#A3E4D7',  # Turquoise
+    '#FF69B4',  # Hot Pink
+    '#00BFFF',  # Deep Sky Blue
+    '#00CED1',  # Dark Turquoise
+    '#FFD700',  # Gold
+    '#9370DB',  # Medium Purple
+    '#1E90FF',  # Dodger Blue
+    '#FF8C00',  # Dark Orange
+    '#32CD32',  # Lime Green
+    '#FF6347',  # Tomato
+    '#4169E1',  # Royal Blue
+    '#BA55D3',  # Medium Orchid
+    '#FFA500',  # Orange
+    '#20B2AA',  # Light Sea Green
+    '#FF1493',  # Deep Pink
+    '#00FA9A',  # Medium Spring Green
 ]
 
 

@@ -39,22 +39,28 @@ class LSTMAutoencoder(nn.Module):
         self.fc_dec = nn.Linear(cfg.hidden_dim, cfg.input_dim)
         self._init_weights()
     
+
     def _init_weights(self):
-        for name, param in self.named_parameters():
-            if 'encoder_lstm' in name or 'decoder_lstm' in name:
-                if 'weight_ih' in name:
-                    nn.init.xavier_uniform_(param.data)
-                elif 'weight_hh' in name:
-                    nn.init.orthogonal_(param.data)
-                elif 'bias' in name:
-                    param.data.fill_(0)
-                    n = param.size(0)
-                    param.data[n//4:n//2].fill_(1)
-            else:
-                if 'weight' in name:
-                    nn.init.xavier_uniform_(param.data)
-                elif 'bias' in name:
-                    param.data.fill_(0)
+        with torch.no_grad():
+            for m in self.modules():
+                if isinstance(m, nn.LSTM):
+                    for name, param in m.named_parameters():
+                        if "weight_ih" in name:
+                            nn.init.xavier_uniform_(param)
+                        elif "weight_hh" in name:
+                            nn.init.orthogonal_(param)
+                        elif "bias" in name:
+                            param.fill_(0.0)
+                            h = param.size(0) // 4
+                            param[h:2*h].fill_(1.0)
+                elif isinstance(m, nn.Linear):
+                    nn.init.xavier_uniform_(m.weight)
+                    if m.bias is not None:
+                        nn.init.zeros_(m.bias)
+                elif isinstance(m, (nn.LayerNorm, nn.BatchNorm1d)):
+                    m.weight is not None and m.weight.fill_(1.0)
+                    m.bias is not None and m.bias.fill_(0.0)
+
 
     def encode(self, x: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
         """Encode trajectory to latent vector [B, latent_dim]"""

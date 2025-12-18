@@ -1,0 +1,233 @@
+{
+  "kmeans": {
+    "2": {
+      "silhouette_score": 0.3223838806152344,
+      "n_clusters_found": 2,
+      "n_noise": 0,
+      "n_clusters_requested": 2
+    },
+    "3": {
+      "silhouette_score": 0.2843448221683502,
+      "n_clusters_found": 3,
+      "n_noise": 0,
+      "n_clusters_requested": 3
+    },
+    "4": {
+      "silhouette_score": 0.28830021619796753,
+      "n_clusters_found": 4,
+      "n_noise": 0,
+      "n_clusters_requested": 4
+    },
+    "5": {
+      "silhouette_score": 0.30831655859947205,
+      "n_clusters_found": 5,
+      "n_noise": 0,
+      "n_clusters_requested": 5
+    },
+    "6": {
+      "silhouette_score": 0.3063866198062897,
+      "n_clusters_found": 6,
+      "n_noise": 0,
+      "n_clusters_requested": 6
+    },
+    "7": {
+      "silhouette_score": 0.3313274085521698,
+      "n_clusters_found": 7,
+      "n_noise": 0,
+      "n_clusters_requested": 7
+    },
+    "8": {
+      "silhouette_score": 0.32423269748687744,
+      "n_clusters_found": 8,
+      "n_noise": 0,
+      "n_clusters_requested": 8
+    },
+    "9": {
+      "silhouette_score": 0.334678590297699,
+      "n_clusters_found": 9,
+      "n_noise": 0,
+      "n_clusters_requested": 9
+    },
+    "10": {
+      "silhouette_score": 0.35037800669670105,
+      "n_clusters_found": 10,
+      "n_noise": 0,
+      "n_clusters_requested": 10
+    }
+  },
+  "gmm": {
+    "2": {
+      "silhouette_score": 0.29755109548568726,
+      "n_clusters_found": 2,
+      "n_noise": 0,
+      "n_clusters_requested": 2
+    },
+    "3": {
+      "silhouette_score": 0.2440631091594696,
+      "n_clusters_found": 3,
+      "n_noise": 0,
+      "n_clusters_requested": 3
+    },
+    "4": {
+      "silhouette_score": 0.25726601481437683,
+      "n_clusters_found": 4,
+      "n_noise": 0,
+      "n_clusters_requested": 4
+    },
+    "5": {
+      "silhouette_score": 0.23459967970848083,
+      "n_clusters_found": 5,
+      "n_noise": 0,
+      "n_clusters_requested": 5
+    },
+    "6": {
+      "silhouette_score": 0.27152249217033386,
+      "n_clusters_found": 6,
+      "n_noise": 0,
+      "n_clusters_requested": 6
+    },
+    "7": {
+      "silhouette_score": 0.3039378225803375,
+      "n_clusters_found": 7,
+      "n_noise": 0,
+      "n_clusters_requested": 7
+    },
+    "8": {
+      "silhouette_score": 0.2985652685165405,
+      "n_clusters_found": 8,
+      "n_noise": 0,
+      "n_clusters_requested": 8
+    },
+    "9": {
+      "silhouette_score": 0.2787236273288727,
+      "n_clusters_found": 9,
+      "n_noise": 0,
+      "n_clusters_requested": 9
+    },
+    "10": {
+      "silhouette_score": 0.3064083755016327,
+      "n_clusters_found": 10,
+      "n_noise": 0,
+      "n_clusters_requested": 10
+    }
+  },
+  "agglomerative": {
+    "2": {
+      "silhouette_score": 0.2632521986961365,
+      "n_clusters_found": 2,
+      "n_noise": 0,
+      "n_clusters_requested": 2
+    },
+    "3": {
+      "silhouette_score": 0.27515512704849243,
+      "n_clusters_found": 3,
+      "n_noise": 0,
+      "n_clusters_requested": 3
+    },
+    "4": {
+      "silhouette_score": 0.270210862159729,
+      "n_clusters_found": 4,
+      "n_noise": 0,
+      "n_clusters_requested": 4
+    },
+    "5": {
+      "silhouette_score": 0.2828496992588043,
+      "n_clusters_found": 5,
+      "n_noise": 0,
+      "n_clusters_requested": 5
+    },
+    "6": {
+      "silhouette_score": 0.30808109045028687,
+      "n_clusters_found": 6,
+      "n_noise": 0,
+      "n_clusters_requested": 6
+    },
+    "7": {
+      "silhouette_score": 0.3027757704257965,
+      "n_clusters_found": 7,
+      "n_noise": 0,
+      "n_clusters_requested": 7
+    },
+    "8": {
+      "silhouette_score": 0.3028770685195923,
+      "n_clusters_found": 8,
+      "n_noise": 0,
+      "n_clusters_requested": 8
+    },
+    "9": {
+      "silhouette_score": 0.3077068030834198,
+      "n_clusters_found": 9,
+      "n_noise": 0,
+      "n_clusters_requested": 9
+    },
+    "10": {
+      "silhouette_score": 0.3110637962818146,
+      "n_clusters_found": 10,
+      "n_noise": 0,
+      "n_clusters_requested": 10
+    }
+  },
+  "dbscan": {
+    "auto": {
+      "silhouette_score": 0.11520777642726898,
+      "n_clusters_found": 8,
+      "n_noise": 165
+    }
+  },
+  "spectral": {
+    "2": {
+      "silhouette_score": 0.323618620634079,
+      "n_clusters_found": 2,
+      "n_noise": 0,
+      "n_clusters_requested": 2
+    },
+    "3": {
+      "silhouette_score": 0.3155718147754669,
+      "n_clusters_found": 3,
+      "n_noise": 0,
+      "n_clusters_requested": 3
+    },
+    "4": {
+      "silhouette_score": 0.28399020433425903,
+      "n_clusters_found": 4,
+      "n_noise": 0,
+      "n_clusters_requested": 4
+    },
+    "5": {
+      "silhouette_score": 0.26552632451057434,
+      "n_clusters_found": 5,
+      "n_noise": 0,
+      "n_clusters_requested": 5
+    },
+    "6": {
+      "silhouette_score": 0.28983405232429504,
+      "n_clusters_found": 6,
+      "n_noise": 0,
+      "n_clusters_requested": 6
+    },
+    "7": {
+      "silhouette_score": 0.31539013981819153,
+      "n_clusters_found": 7,
+      "n_noise": 0,
+      "n_clusters_requested": 7
+    },
+    "8": {
+      "silhouette_score": 0.31145504117012024,
+      "n_clusters_found": 8,
+      "n_noise": 0,
+      "n_clusters_requested": 8
+    },
+    "9": {
+      "silhouette_score": 0.29906708002090454,
+      "n_clusters_found": 9,
+      "n_noise": 0,
+      "n_clusters_requested": 9
+    },
+    "10": {
+      "silhouette_score": 0.29980161786079407,
+      "n_clusters_found": 10,
+      "n_noise": 0,
+      "n_clusters_requested": 10
+    }
+  }
+}
